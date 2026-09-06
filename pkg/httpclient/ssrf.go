@@ -28,6 +28,7 @@ var cgnatRange = mustCIDR("100.64.0.0/10")
 // blockedIPv6Prefixes are IPv6 ranges that embed or forward arbitrary IPv4
 // addresses and must therefore be treated as non-public.
 var blockedIPv6Prefixes = []*net.IPNet{
+	mustCIDR("::/96"),          // RFC 4291  – IPv4-compatible (low 32 bits = IPv4); To4 does not unwrap it
 	mustCIDR("2002::/16"),      // RFC 3056  – 6to4 (bits 16-47 = IPv4)
 	mustCIDR("64:ff9b::/96"),   // RFC 6052  – NAT64 well-known
 	mustCIDR("64:ff9b:1::/48"), // RFC 8215  – NAT64 local-use
@@ -37,8 +38,8 @@ var blockedIPv6Prefixes = []*net.IPNet{
 // IsPublicIP reports whether ip is a routable public address. It rejects
 // loopback (127/8, ::1), RFC1918 private ranges, link-local (incl. the
 // 169.254.169.254 cloud metadata endpoint), multicast, the unspecified
-// address (0.0.0.0, ::), CGNAT (100.64.0.0/10), IPv6 6to4, NAT64, and
-// site-local prefixes.
+// address (0.0.0.0, ::), CGNAT (100.64.0.0/10), IPv6 6to4, NAT64,
+// IPv4-compatible (::a.b.c.d), and site-local prefixes.
 func IsPublicIP(ip net.IP) bool {
 	if ip.IsLoopback() ||
 		ip.IsPrivate() ||

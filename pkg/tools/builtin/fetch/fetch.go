@@ -358,6 +358,32 @@ func (h *fetchHandler) checkDomainAllowed(u *url.URL) error {
 	return nil
 }
 
+// ipv4CompatiblePrefix is ::/96 (RFC 4291 2.5.5.1).
+var ipv4CompatiblePrefix = func() *net.IPNet {
+	_, network, err := net.ParseCIDR("::/96")
+	if err != nil {
+		panic("fetch: invalid IPv4-compatible CIDR: " + err.Error())
+	}
+	return network
+}()
+
+// embeddedIPv4 unwraps both IPv6 encodings of an IPv4 address — mapped
+// (::ffff:a.b.c.d, handled by To4) and compatible (::a.b.c.d, which To4
+// leaves alone) — returning nil for a genuine IPv6 address. :: and ::1 are
+// excluded: unwrapping them would break patterns like "::1/128".
+func embeddedIPv4(ip net.IP) net.IP {
+	if ipv4 := ip.To4(); ipv4 != nil {
+		return ipv4
+	}
+	if ip.IsUnspecified() || ip.IsLoopback() {
+		return nil
+	}
+	if ipv4CompatiblePrefix.Contains(ip) {
+		return ip[12:16]
+	}
+	return nil
+}
+
 // matchesDomain reports whether host matches pattern (case-insensitive).
 //
 // Supported pattern shapes:
@@ -393,14 +419,9 @@ func matchesDomain(host, pattern string) bool {
 			// url.Hostname() already strips IPv6 brackets, but be defensive.
 			ipStr := strings.TrimSuffix(strings.Trim(host, "[]"), ".")
 			if ip := net.ParseIP(ipStr); ip != nil {
-				// Normalize IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) to their
-				// IPv4 form before checking CIDR membership. Without this, an
-				// attacker can bypass an IPv4 deny-list like "169.254.0.0/16" by
-				// using the IPv6-mapped form "::ffff:169.254.169.254".
-				//
-				// net.IP.To4() returns nil for "true" IPv6 addresses and the
-				// 4-byte IPv4 form for IPv4 or IPv4-mapped-IPv6.
-				if ipv4 := ip.To4(); ipv4 != nil {
+				// Without normalising, a deny-list entry of "169.254.0.0/16"
+				// misses "::ffff:169.254.169.254" and "::169.254.169.254".
+				if ipv4 := embeddedIPv4(ip); ipv4 != nil {
 					return ipNet.Contains(ipv4)
 				}
 				return ipNet.Contains(ip)
@@ -412,18 +433,17 @@ func matchesDomain(host, pattern string) bool {
 		// string matcher below, which will never match a host.
 	}
 
-	// Normalize IPv4-mapped IPv6 addresses to their IPv4 form for string
-	// comparison. This ensures that "::ffff:169.254.169.254" matches a
-	// literal pattern "169.254.169.254" (and vice versa).
+	// Same normalisation for the literal comparison, so both IPv6 encodings
+	// match a pattern of "169.254.169.254" (and vice versa).
 	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
-		if ipv4 := ip.To4(); ipv4 != nil {
+		if ipv4 := embeddedIPv4(ip); ipv4 != nil {
 			host = ipv4.String()
 		} else {
 			host = ip.String()
 		}
 	}
 	if ip := net.ParseIP(strings.Trim(pattern, "[]")); ip != nil {
-		if ipv4 := ip.To4(); ipv4 != nil {
+		if ipv4 := embeddedIPv4(ip); ipv4 != nil {
 			pattern = ipv4.String()
 		} else {
 			pattern = ip.String()

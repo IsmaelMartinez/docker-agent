@@ -280,6 +280,43 @@ func TestIsPublicIP_IPv4MappedIPv6(t *testing.T) {
 	}
 }
 
+// TestIsPublicIP_IPv4CompatibleIPv6 is the sibling of
+// [TestIsPublicIP_IPv4MappedIPv6] for the ::a.b.c.d form, which To4 does
+// not unwrap.
+func TestIsPublicIP_IPv4CompatibleIPv6(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		addr     string
+		isPublic bool
+	}{
+		{"::127.0.0.1", false},         // loopback
+		{"::10.0.0.1", false},          // RFC1918
+		{"::169.254.169.254", false},   // cloud metadata (link-local)
+		{"::8.8.8.8", false},           // public IPv4, but still ::/96
+		{"::1", false},                 // IPv6 loopback
+		{"::", false},                  // unspecified
+		{"2001:4860:4860::8888", true}, // real IPv6 unaffected
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			t.Parallel()
+			ip := net.ParseIP(tt.addr)
+			require.NotNil(t, ip, "ParseIP must succeed")
+			assert.Equal(t, tt.isPublic, IsPublicIP(ip))
+		})
+	}
+}
+
+func TestSSRFDialControl_IPv4CompatibleIPv6(t *testing.T) {
+	t.Parallel()
+
+	err := SSRFDialControl("tcp6", "[::169.254.169.254]:80", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "non-public address")
+}
+
 // TestSSRFDialControl_IPv6ZoneID verifies that IPv6 addresses with zone
 // identifiers (fe80::1%eth0) are rejected. net.ParseIP returns nil for
 // such addresses, causing the dial control to fail-closed with "not a

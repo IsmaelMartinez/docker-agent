@@ -581,6 +581,19 @@ func TestMatchesDomain(t *testing.T) {
 		{"ipv4-mapped ipv6 outside ipv4 cidr", "::ffff:10.0.0.1", "169.254.0.0/16", false},
 		{"ipv4-mapped ipv6 matches ipv4 literal", "::ffff:169.254.169.254", "169.254.169.254", true},
 		{"ipv4 literal matches ipv4-mapped ipv6 cidr (edge case)", "169.254.169.254", "::ffff:169.254.0.0/112", true},
+
+		// IPv4-compatible IPv6 bypass prevention (::a.b.c.d, RFC 4291 2.5.5.1).
+		{"ipv4-compatible ipv6 matches ipv4 cidr", "::169.254.169.254", "169.254.0.0/16", true},
+		{"ipv4-compatible ipv6 matches ipv4 /32", "::10.0.0.1", "10.0.0.1/32", true},
+		{"ipv4-compatible ipv6 outside ipv4 cidr", "::10.0.0.1", "169.254.0.0/16", false},
+		{"ipv4-compatible ipv6 matches ipv4 literal", "::169.254.169.254", "169.254.169.254", true},
+		{"ipv4-compatible ipv6 matches bracketed ipv4 literal", "[::169.254.169.254]", "169.254.169.254", true},
+		{"ipv4-compatible ipv6 pattern matches ipv4 host", "169.254.169.254", "::169.254.169.254", true},
+
+		// :: and ::1 must not be unwrapped to 0.0.0.0 / 0.0.0.1.
+		{"ipv6 loopback still matches ipv6 cidr", "::1", "::1/128", true},
+		{"ipv6 loopback does not match 0.0.0.1", "::1", "0.0.0.1", false},
+		{"ipv6 unspecified does not match 0.0.0.0", "::", "0.0.0.0", false},
 	}
 
 	for _, tc := range tests {
