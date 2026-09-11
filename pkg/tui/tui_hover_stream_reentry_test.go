@@ -106,7 +106,7 @@ func TestActualProgramHoverThenBottomReentryStaysBounded(t *testing.T) {
 		_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.AgentChoice("root", "profile", chunk)})
 		_ = root.View()
 	}
-	root.chatPage.ScrollToBottom()
+	root.activeTab.chatPage.ScrollToBottom()
 	before := root.View().Content
 	model := &streamingMotionModel{root: root, ready: make(chan struct{})}
 	writer := &wallClockCountingWriter{}

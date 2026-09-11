@@ -102,12 +102,12 @@ func (p *countingChatPage) View() string {
 func TestRootViewCachePreservesExactViewOnCleanTick(t *testing.T) {
 	m, _ := newTestModel(t)
 	page := &countingChatPage{text: "stable"}
-	m.chatPage = page
+	m.activeTab.chatPage = page
 	m.ready = true
 	m.leanMode = true
 	m.ar = animation.NewRuntime()
 	m.appName = "test"
-	m.sessionState = &service.SessionState{}
+	m.activeTab.sessionState = &service.SessionState{}
 
 	first := m.View()
 	require.Equal(t, 1, page.views)
@@ -131,12 +131,12 @@ func TestRootViewCachePreservesExactViewOnCleanTick(t *testing.T) {
 func TestRootViewCacheInvalidatesOnlyForDirtyAcceptedTick(t *testing.T) {
 	m, _ := newTestModel(t)
 	page := &countingChatPage{text: "stable"}
-	m.chatPage = page
+	m.activeTab.chatPage = page
 	m.ready = true
 	m.leanMode = true
 	m.ar = animation.NewRuntime()
 	m.appName = "test"
-	m.sessionState = &service.SessionState{}
+	m.activeTab.sessionState = &service.SessionState{}
 	_ = m.View()
 
 	sub := m.ar.Subscribe()
@@ -247,12 +247,12 @@ func newTestModel(tb testing.TB) (*appModel, *mockEditor) {
 	tb.Helper()
 	page := &mockChatPage{}
 	ed := &mockEditor{}
+	tab := &tabModel{chatPage: page, editor: ed}
 
 	m := &appModel{
 		ctx:          tb.Context,
-		tabs:         map[string]*tabModel{"test": {chatPage: page, editor: ed}},
-		chatPage:     page,
-		editor:       ed,
+		tabs:         map[string]*tabModel{"test": tab},
+		activeTab:    tab,
 		transcriber:  &fakeTranscriber{},
 		notification: notification.New(),
 		dialogMgr:    dialog.New(),

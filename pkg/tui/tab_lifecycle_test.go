@@ -38,31 +38,33 @@ func TestSwitchTabPreservesComponentsAndDraft(t *testing.T) {
 	t.Parallel()
 	m := newTabLifecycleModel(t)
 	firstID := m.supervisor.ActiveID()
-	firstPage, firstEditor, firstState := m.chatPage, m.editor, m.sessionState
+	firstPage, firstEditor, firstState := m.activeTab.chatPage, m.activeTab.editor, m.activeTab.sessionState
 	firstEditor.SetValue("unfinished draft")
 
 	_, _ = m.handleSpawnSession("/second")
 	secondID := m.supervisor.ActiveID()
-	secondPage, secondEditor := m.chatPage, m.editor
+	secondPage, secondEditor := m.activeTab.chatPage, m.activeTab.editor
 	secondEditor.SetValue("second draft")
 
 	_, _ = m.handleSwitchTab(firstID)
-	assert.Same(t, firstPage, m.chatPage)
-	assert.Same(t, firstEditor, m.editor)
-	assert.Same(t, firstState, m.sessionState)
-	assert.Equal(t, "unfinished draft", m.editor.Value())
+	assert.Same(t, m.tabs[firstID], m.activeTab)
+	assert.Same(t, firstPage, m.activeTab.chatPage)
+	assert.Same(t, firstEditor, m.activeTab.editor)
+	assert.Same(t, firstState, m.activeTab.sessionState)
+	assert.Equal(t, "unfinished draft", m.activeTab.editor.Value())
 
 	_, _ = m.handleSwitchTab(secondID)
-	assert.Same(t, secondPage, m.chatPage)
-	assert.Same(t, secondEditor, m.editor)
-	assert.Equal(t, "second draft", m.editor.Value())
+	assert.Same(t, m.tabs[secondID], m.activeTab)
+	assert.Same(t, secondPage, m.activeTab.chatPage)
+	assert.Same(t, secondEditor, m.activeTab.editor)
+	assert.Equal(t, "second draft", m.activeTab.editor.Value())
 }
 
 func TestSwitchTabFailureLeavesDialogAndComponents(t *testing.T) {
 	t.Parallel()
 	m := newTabLifecycleModel(t)
 	id := m.supervisor.ActiveID()
-	page, ed, state := m.chatPage, m.editor, m.sessionState
+	page, ed, state := m.activeTab.chatPage, m.activeTab.editor, m.activeTab.sessionState
 	event := &messages.SendMsg{}
 	prompt := &stubDialog{id: "draft"}
 	_, _ = m.dialogMgr.Update(dialog.OpenDialogMsg{Model: prompt, OriginatingEvent: event})
@@ -71,9 +73,9 @@ func TestSwitchTabFailureLeavesDialogAndComponents(t *testing.T) {
 
 	assert.Equal(t, id, m.supervisor.ActiveID())
 	assert.NotContains(t, m.tabs, "missing")
-	assert.Same(t, page, m.chatPage)
-	assert.Same(t, ed, m.editor)
-	assert.Same(t, state, m.sessionState)
+	assert.Same(t, page, m.activeTab.chatPage)
+	assert.Same(t, ed, m.activeTab.editor)
+	assert.Same(t, state, m.activeTab.sessionState)
 	assert.Same(t, prompt, m.dialogMgr.TopDialog())
 	assert.Nil(t, m.tabs[id].stashedDialog)
 	assert.Nil(t, m.supervisor.ConsumePendingEvent(id))
@@ -83,7 +85,7 @@ func TestSwitchTabFailureLeavesDialogAndComponents(t *testing.T) {
 func TestSwitchTabBuildsComponentsBeforeReplacingActiveUI(t *testing.T) {
 	t.Parallel()
 	m := newTabLifecycleModel(t)
-	outgoingApp, outgoingPage, outgoingEditor := m.application, m.chatPage, m.editor
+	outgoingApp, outgoingPage, outgoingEditor := m.application, m.activeTab.chatPage, m.activeTab.editor
 	calls := 0
 	m.buildCommandCategories = func(_ context.Context, model tea.Model) []commands.Category {
 		calls++
@@ -96,14 +98,14 @@ func TestSwitchTabBuildsComponentsBeforeReplacingActiveUI(t *testing.T) {
 	_, _ = m.handleSpawnSession("/second")
 
 	assert.Equal(t, 2, calls)
-	assert.NotSame(t, outgoingPage, m.chatPage)
-	assert.NotSame(t, outgoingEditor, m.editor)
+	assert.NotSame(t, outgoingPage, m.activeTab.chatPage)
+	assert.NotSame(t, outgoingEditor, m.activeTab.editor)
 }
 
 func TestSwitchTabFailedRestoreConsumesPendingState(t *testing.T) {
 	t.Parallel()
 	m := newTabLifecycleModel(t)
-	outgoingPage := m.chatPage
+	outgoingPage := m.activeTab.chatPage
 	sess := session.New()
 	application := app.New(t.Context(), storeRuntime{store: session.NewInMemorySessionStore()}, sess)
 	id := m.supervisor.AddSession(t.Context(), application, sess, "/second", nil)
@@ -120,8 +122,8 @@ func TestSwitchTabFailedRestoreConsumesPendingState(t *testing.T) {
 	assert.Nil(t, m.tabs[id].pendingRestore)
 	assert.Nil(t, m.tabs[id].pendingSidebarCollapsed)
 	assert.Same(t, application, m.application)
-	assert.Same(t, m.tabs[id].chatPage, m.chatPage)
-	assert.True(t, m.chatPage.GetSidebarSettings().Collapsed)
+	assert.Same(t, m.tabs[id].chatPage, m.activeTab.chatPage)
+	assert.True(t, m.activeTab.chatPage.GetSidebarSettings().Collapsed)
 	assert.Nil(t, m.applySidebarCollapsed(id))
 }
 
@@ -135,15 +137,15 @@ func TestCloseInactiveTabRemovesAllUIState(t *testing.T) {
 	m.ensureTab(closedID).pendingSidebarCollapsed = new(true)
 	m.ensureTab(closedID).stashedDialog = &stashedDialog{dialog: &stubDialog{id: "stashed"}}
 	_, _ = m.handleSpawnSession("/second")
-	page, ed, state := m.chatPage, m.editor, m.sessionState
+	page, ed, state := m.activeTab.chatPage, m.activeTab.editor, m.activeTab.sessionState
 
 	_, _ = m.handleCloseTab(closedID)
 
 	assert.True(t, closedEditor.cleanupCalled)
 	assert.NotContains(t, m.tabs, closedID)
-	assert.Same(t, page, m.chatPage)
-	assert.Same(t, ed, m.editor)
-	assert.Same(t, state, m.sessionState)
+	assert.Same(t, page, m.activeTab.chatPage)
+	assert.Same(t, ed, m.activeTab.editor)
+	assert.Same(t, state, m.activeTab.sessionState)
 }
 
 func TestCloseLastTabKeepsUIUntilReplacement(t *testing.T) {
@@ -153,7 +155,7 @@ func TestCloseLastTabKeepsUIUntilReplacement(t *testing.T) {
 			t.Parallel()
 			m := newTabLifecycleModel(t)
 			oldID := m.supervisor.ActiveID()
-			oldPage, oldEditor := m.chatPage, m.editor
+			oldPage, oldEditor := m.activeTab.chatPage, m.activeTab.editor
 			if fail {
 				m.supervisor.Shutdown()
 				m.supervisor = supervisor.New(func(context.Context, string) (*app.App, *session.Session, func(), error) {
@@ -167,13 +169,13 @@ func TestCloseLastTabKeepsUIUntilReplacement(t *testing.T) {
 			assert.NotContains(t, m.tabs, oldID)
 			if fail {
 				assert.Zero(t, m.supervisor.Count())
-				assert.Same(t, oldPage, m.chatPage)
-				assert.Same(t, oldEditor, m.editor)
+				assert.Same(t, oldPage, m.activeTab.chatPage)
+				assert.Same(t, oldEditor, m.activeTab.editor)
 				assert.True(t, hasMsg[notification.ShowMsg](collectMsgs(cmd)))
 			} else {
 				assert.Equal(t, 1, m.supervisor.Count())
-				assert.NotSame(t, oldPage, m.chatPage)
-				assert.NotSame(t, oldEditor, m.editor)
+				assert.NotSame(t, oldPage, m.activeTab.chatPage)
+				assert.NotSame(t, oldEditor, m.activeTab.editor)
 			}
 		})
 	}
@@ -234,15 +236,16 @@ func TestSwitchTabRestoresSavedSession(t *testing.T) {
 	_, _ = m.handleSwitchTab(id)
 
 	assert.Same(t, tab, m.tabs[id])
+	assert.Same(t, tab, m.activeTab)
 	assert.Equal(t, id, m.supervisor.ActiveID())
 	assert.Equal(t, saved.ID, m.application.Session().ID)
 	assert.Equal(t, saved.ID, m.persistedSessionID(id))
 	assert.Nil(t, tab.pendingRestore)
 	assert.Nil(t, tab.pendingSidebarCollapsed)
-	assert.Same(t, tab.chatPage, m.chatPage)
-	assert.Same(t, tab.editor, m.editor)
-	assert.True(t, m.chatPage.GetSidebarSettings().Collapsed)
-	assert.Contains(t, m.chatPage.View(), "saved conversation")
+	assert.Same(t, tab.chatPage, m.activeTab.chatPage)
+	assert.Same(t, tab.editor, m.activeTab.editor)
+	assert.True(t, m.activeTab.chatPage.GetSidebarSettings().Collapsed)
+	assert.Contains(t, m.activeTab.chatPage.View(), "saved conversation")
 }
 
 func TestInitRestoresPendingTab(t *testing.T) {
@@ -277,12 +280,13 @@ func TestInitRestoresPendingTab(t *testing.T) {
 			_ = m.init()
 
 			assert.Same(t, tab, m.tabs[id])
+			assert.Same(t, tab, m.activeTab)
 			assert.Equal(t, id, m.supervisor.ActiveID())
 			assert.Empty(t, m.pendingActiveTab)
 			assert.Nil(t, tab.pendingRestore)
 			assert.Nil(t, tab.pendingSidebarCollapsed)
 			assert.Equal(t, saved.ID, m.application.Session().ID)
-			assert.Contains(t, m.chatPage.View(), "startup conversation")
+			assert.Contains(t, m.activeTab.chatPage.View(), "startup conversation")
 		})
 	}
 }

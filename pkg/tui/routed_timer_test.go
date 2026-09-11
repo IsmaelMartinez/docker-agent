@@ -64,7 +64,7 @@ func newRoutedTestModel(t *testing.T, makePage func(sess *session.Session, routi
 
 	m.ensureTab(activeID).chatPage = makePage(sessA, activeID)
 	m.ensureTab(backgroundID).chatPage = makePage(sessB, backgroundID)
-	m.chatPage = m.tabs[activeID].chatPage
+	m.activeTab = m.tabs[activeID]
 	m.ensureTab(activeID).sessionState = service.NewSessionState(sessA)
 	m.ensureTab(backgroundID).sessionState = service.NewSessionState(sessB)
 	return m, activeID, backgroundID

@@ -48,12 +48,12 @@ func newSpeakTestModel(tb testing.TB, ft *fakeTranscriber) *appModel {
 	tb.Helper()
 	page := &mockChatPage{}
 	ed := &mockEditor{}
+	tab := &tabModel{chatPage: page, editor: ed}
 
 	return &appModel{
 		ctx:         tb.Context,
-		tabs:        map[string]*tabModel{"test": {chatPage: page, editor: ed}},
-		chatPage:    page,
-		editor:      ed,
+		tabs:        map[string]*tabModel{"test": tab},
+		activeTab:   tab,
 		transcriber: ft,
 		dialogMgr:   dialog.New(),
 	}

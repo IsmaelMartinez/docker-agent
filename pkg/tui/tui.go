@@ -137,11 +137,10 @@ type appModel struct {
 	// Tabs retain UI components and pending restore state across switches.
 	tabs map[string]*tabModel
 
-	// Active session (convenience pointers to the currently visible session)
-	application  *app.App
-	sessionState *service.SessionState
-	chatPage     chat.Page
-	editor       editor.Editor
+	// Keep the outgoing UI until activation completes, including a failed last-tab replacement.
+	activeTab *tabModel
+	// Kept separate: pending restore binds the incoming runtime before activeTab changes.
+	application *app.App
 
 	// ctx preserves values from the root TUI context (trace context,
 	// baggage, log attrs) without inheriting cancellation. Bubble Tea
@@ -493,6 +492,7 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 
 	initialSessionState := service.NewSessionState(initialApp.Session())
 	sessID := initialApp.Session().ID
+	initialTab := &tabModel{sessionState: initialSessionState}
 
 	m := &appModel{
 		ar:           ar,
@@ -503,10 +503,10 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 		supervisor:                    sv,
 		tabBar:                        tb,
 		tuiStore:                      ts,
-		tabs:                          map[string]*tabModel{sessID: {sessionState: initialSessionState}},
+		tabs:                          map[string]*tabModel{sessID: initialTab},
 		application:                   initialApp,
 		ctx:                           tuiCtx,
-		sessionState:                  initialSessionState,
+		activeTab:                     initialTab,
 		history:                       historyStore,
 		notification:                  notification.New(),
 		dialogMgr:                     dialog.New(),
@@ -533,14 +533,12 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 
 	// Create initial editor (after options are applied so command builder is set)
 	initialEditor := editor.New(historyStore, m.editorOpts()...)
-	m.tabs[sessID].editor = initialEditor
-	m.editor = initialEditor
+	initialTab.editor = initialEditor
 
 	// Create initial chat page (after options are applied so leanMode is set)
 	initialChatPage := chat.New(m.ar, m.ctx(), initialApp, initialSessionState, m.chatPageOpts()...)
 	initialChatPage.SetRoutingID(sessID)
-	m.tabs[sessID].chatPage = initialChatPage
-	m.chatPage = initialChatPage
+	initialTab.chatPage = initialChatPage
 
 	// Initialize status bar (pass m as help provider)
 	m.statusBar = statusbar.New(m, statusbar.WithTitle(m.appName+" "+m.appVersion))
@@ -566,11 +564,11 @@ func (m *appModel) Resolve(v any) any {
 	case **app.App:
 		return m.application
 	case **service.SessionState:
-		return m.sessionState
+		return m.activeTab.sessionState
 	case *chat.Page:
-		return m.chatPage
+		return m.activeTab.chatPage
 	case *editor.Editor:
-		return m.editor
+		return m.activeTab.editor
 	}
 
 	return nil
@@ -677,8 +675,7 @@ func (m *appModel) editorOpts() []editor.Option {
 }
 
 // initSessionComponents creates a new chat page, session state, and editor for
-// the given app and stores them in its tab. The active convenience pointers
-// (m.chatPage, m.sessionState, m.editor) are also updated.
+// the given app, then activates the owning tab.
 func (m *appModel) initSessionComponents(tabID string, a *app.App, sess *session.Session) {
 	tab := m.ensureTab(tabID)
 	if tab.chatPage != nil {
@@ -694,9 +691,7 @@ func (m *appModel) initSessionComponents(tabID string, a *app.App, sess *session
 	tab.editor = ed
 
 	m.application = a
-	m.sessionState = ss
-	m.chatPage = cp
-	m.editor = ed
+	m.activeTab = tab
 }
 
 // initAndFocusComponents returns a batch of commands that initializes and focuses
@@ -704,10 +699,10 @@ func (m *appModel) initSessionComponents(tabID string, a *app.App, sess *session
 func (m *appModel) initAndFocusComponents() tea.Cmd {
 	m.reapplyKeyboardEnhancements()
 	return tea.Batch(
-		m.chatPage.Init(),
-		chat.WatchGitBranch(m.chatPage),
-		m.editor.Init(),
-		m.editor.Focus(),
+		m.activeTab.chatPage.Init(),
+		chat.WatchGitBranch(m.activeTab.chatPage),
+		m.activeTab.editor.Init(),
+		m.activeTab.editor.Focus(),
 		m.resizeAll(),
 	)
 }
@@ -809,10 +804,10 @@ func (m *appModel) init() tea.Cmd {
 	return tea.Batch(
 		shutdownCmd,
 		m.dialogMgr.Init(),
-		m.chatPage.Init(),
-		chat.WatchGitBranch(m.chatPage),
-		m.editor.Init(),
-		m.editor.Focus(),
+		m.activeTab.chatPage.Init(),
+		chat.WatchGitBranch(m.activeTab.chatPage),
+		m.activeTab.editor.Init(),
+		m.activeTab.editor.Focus(),
 		m.application.SendFirstMessage(),
 	)
 }
@@ -836,16 +831,16 @@ func tabVisualGeneration(tabBar *tabbar.TabBar) uint64 {
 }
 
 func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	beforeVisual := m.chatPage.VisualGeneration()
-	beforeSidebarVisual := sidebarVisualGeneration(m.chatPage)
+	beforeVisual := m.activeTab.chatPage.VisualGeneration()
+	beforeSidebarVisual := sidebarVisualGeneration(m.activeTab.chatPage)
 	beforeTabVisual := tabVisualGeneration(m.tabBar)
 	beforeResizeHover := m.isHoveringHandle
 	wasCached := m.viewCacheValid
 	cached := m.viewCache
 	canRestore := m.canRestorePointerCache(msg)
 	defer func() {
-		if canRestore && wasCached && m.chatPage.VisualGeneration() == beforeVisual &&
-			sidebarVisualGeneration(m.chatPage) == beforeSidebarVisual &&
+		if canRestore && wasCached && m.activeTab.chatPage.VisualGeneration() == beforeVisual &&
+			sidebarVisualGeneration(m.activeTab.chatPage) == beforeSidebarVisual &&
 			tabVisualGeneration(m.tabBar) == beforeTabVisual &&
 			m.isHoveringHandle == beforeResizeHover {
 			m.viewCache, m.viewCacheValid = cached, true
@@ -888,7 +883,7 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds := []tea.Cmd{m.updateChatCmd(msg)}
 		// Update working spinner
-		if m.chatPage.IsWorking() {
+		if m.activeTab.chatPage.IsWorking() {
 			model, cmd := m.workingSpinner.Update(msg)
 			m.workingSpinner = model.(spinner.Spinner)
 			cmds = append(cmds, cmd)
@@ -897,7 +892,7 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// children, so include their rendered frame boundaries in the shared
 		// dirty decision.
 		before, after := msg.ElapsedBounds()
-		if m.chatPage.IsWorking() && animation.Chat.FrameIndexAt(before) != animation.Chat.FrameIndexAt(after) {
+		if m.activeTab.chatPage.IsWorking() && animation.Chat.FrameIndexAt(before) != animation.Chat.FrameIndexAt(after) {
 			msg.MarkDirty()
 		}
 		if m.supervisor != nil {
@@ -956,26 +951,26 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focusedPanel != PanelContent {
 				m.focusedPanel = PanelContent
 				m.statusBar.InvalidateCache()
-				m.editor.Blur()
+				m.activeTab.editor.Blur()
 			}
 			if msg.ClickX != 0 || msg.ClickY != 0 {
-				return m, m.chatPage.FocusMessageAt(msg.ClickX, msg.ClickY)
+				return m, m.activeTab.chatPage.FocusMessageAt(msg.ClickX, msg.ClickY)
 			}
-			return m, m.chatPage.FocusMessages()
+			return m, m.activeTab.chatPage.FocusMessages()
 		case messages.PanelSidebarTitle:
 			if m.focusedPanel != PanelContent {
 				m.focusedPanel = PanelContent
 				m.statusBar.InvalidateCache()
-				m.chatPage.BlurMessages()
-				m.editor.Blur()
+				m.activeTab.chatPage.BlurMessages()
+				m.activeTab.editor.Blur()
 			}
 			return m, nil
 		case messages.PanelEditor:
 			if m.focusedPanel != PanelEditor {
 				m.focusedPanel = PanelEditor
 				m.statusBar.InvalidateCache()
-				m.chatPage.BlurMessages()
-				return m, m.editor.Focus()
+				m.activeTab.chatPage.BlurMessages()
+				return m, m.activeTab.editor.Focus()
 			}
 		}
 		return m, nil
@@ -1067,7 +1062,7 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// When inline editing a past message, forward paste to the chat page
 		// so the messages component can insert content into the inline textarea.
-		if m.chatPage.IsInlineEditing() {
+		if m.activeTab.chatPage.IsInlineEditing() {
 			return m.forwardChat(msg)
 		}
 		// Forward paste to editor
@@ -1149,17 +1144,17 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// --- Runtime event specializations ---
 
 	case *runtime.TeamInfoEvent:
-		m.sessionState.SetAvailableAgents(msg.AvailableAgents)
-		m.sessionState.SetCurrentAgentName(msg.CurrentAgent)
+		m.activeTab.sessionState.SetAvailableAgents(msg.AvailableAgents)
+		m.activeTab.sessionState.SetCurrentAgentName(msg.CurrentAgent)
 		return m.forwardChat(msg)
 
 	case *runtime.AgentInfoEvent:
-		m.sessionState.SetCurrentAgentName(msg.AgentName)
+		m.activeTab.sessionState.SetCurrentAgentName(msg.AgentName)
 		m.application.TrackCurrentAgentModel(msg.Model)
 		return m.forwardChat(msg)
 
 	case *runtime.SessionTitleEvent:
-		m.sessionState.SetSessionTitle(msg.Title)
+		m.activeTab.sessionState.SetSessionTitle(msg.Title)
 		return m.forwardChat(msg)
 
 	case *runtime.PlanChangedEvent:
@@ -1204,7 +1199,7 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// --- File attachments (routed to editor) ---
 
 	case messages.InsertFileRefMsg:
-		if err := m.editor.AttachFile(msg.FilePath); err != nil {
+		if err := m.activeTab.editor.AttachFile(msg.FilePath); err != nil {
 			slog.Warn("failed to attach file", "path", msg.FilePath, "error", err)
 			return m, nil
 		}
@@ -1443,7 +1438,7 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleStopSpeak()
 
 	case messages.SpeakTranscriptMsg:
-		m.editor.InsertText(msg.Delta)
+		m.activeTab.editor.InsertText(msg.Delta)
 		cmd := m.waitForTranscript()
 		return m, cmd
 
@@ -1487,9 +1482,9 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle runtime events for active session
 		if event, isRuntimeEvent := msg.(runtime.Event); isRuntimeEvent {
 			if agentName := event.GetAgentName(); agentName != "" {
-				m.sessionState.SetCurrentAgentName(agentName)
+				m.activeTab.sessionState.SetCurrentAgentName(agentName)
 			}
-			m.applyPauseEvent(m.sessionState, msg)
+			m.applyPauseEvent(m.activeTab.sessionState, msg)
 			return m.forwardChat(msg)
 		}
 
@@ -1578,7 +1573,7 @@ func (m *appModel) handleWorkingStateChanged(msg messages.WorkingStateChangedMsg
 	var cmds []tea.Cmd
 
 	// Update editor working state
-	cmds = append(cmds, m.editor.SetWorking(msg.Working))
+	cmds = append(cmds, m.activeTab.editor.SetWorking(msg.Working))
 
 	// Start/stop working spinner
 	if msg.Working {
@@ -1764,8 +1759,8 @@ func (m *appModel) handleClearSession() (tea.Model, tea.Cmd) {
 	m.initSessionComponents(activeID, m.application, newSess)
 	m.dialogMgr = dialog.New()
 	m.supervisor.SetRunnerTitle(activeID, "")
-	m.sessionState.SetSessionTitle("")
-	m.sessionState.SetPreviousMessage(nil)
+	m.activeTab.sessionState.SetSessionTitle("")
+	m.activeTab.sessionState.SetPreviousMessage(nil)
 
 	// Update persisted tab to point to the new session.
 	if m.tuiStore != nil {
@@ -1781,11 +1776,11 @@ func (m *appModel) handleClearSession() (tea.Model, tea.Cmd) {
 
 	return m, tea.Batch(
 		tea.Sequence(
-			m.chatPage.Init(),
+			m.activeTab.chatPage.Init(),
 			m.resizeAll(),
-			m.editor.Focus(),
+			m.activeTab.editor.Focus(),
 		),
-		chat.WatchGitBranch(m.chatPage),
+		chat.WatchGitBranch(m.activeTab.chatPage),
 	)
 }
 
@@ -1941,7 +1936,7 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	}
 
 	// Blur current editor before switching
-	m.editor.Blur()
+	m.activeTab.editor.Blur()
 
 	// If this tab has a pending session restore, load it through
 	// replaceActiveSession — the same code path as the /sessions command.
@@ -1977,18 +1972,15 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 		m.initSessionComponents(sessionID, runner.App, runner.App.Session())
 		m.applySidebarCollapsed(sessionID)
 	} else {
-		// Reuse existing components — just update convenience pointers.
 		m.application = runner.App
-		m.sessionState = tab.sessionState
-		m.chatPage = tab.chatPage
-		m.editor = tab.editor
+		m.activeTab = tab
 	}
 
 	m.reapplyKeyboardEnhancements()
 	m.persistActiveTab(m.persistedSessionID(sessionID))
 
 	// Sync editor working state and reset working spinner.
-	m.editor.SetWorking(m.chatPage.IsWorking())
+	m.activeTab.editor.SetWorking(m.activeTab.chatPage.IsWorking())
 	m.workingSpinner.Stop()
 	m.workingSpinner = spinner.New(m.ar, spinner.ModeSpinnerOnly, styles.SpinnerDotsHighlightStyle)
 
@@ -1996,17 +1988,17 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 
 	if !pageExists || !editorExists {
 		if !pageExists {
-			cmds = append(cmds, m.chatPage.Init(), chat.WatchGitBranch(m.chatPage))
+			cmds = append(cmds, m.activeTab.chatPage.Init(), chat.WatchGitBranch(m.activeTab.chatPage))
 		}
 		if !editorExists {
-			cmds = append(cmds, m.editor.Init())
+			cmds = append(cmds, m.activeTab.editor.Init())
 		}
-		cmds = append(cmds, m.editor.Focus(), m.resizeAll())
+		cmds = append(cmds, m.activeTab.editor.Focus(), m.resizeAll())
 	} else {
-		cmds = append(cmds, m.resizeAll(), m.chatPage.ScrollToBottom(), m.editor.Focus())
+		cmds = append(cmds, m.resizeAll(), m.activeTab.chatPage.ScrollToBottom(), m.activeTab.editor.Focus())
 	}
 
-	if m.chatPage.IsWorking() {
+	if m.activeTab.chatPage.IsWorking() {
 		cmds = append(cmds, m.workingSpinner.Init())
 	}
 	if pendingCmd := m.replayPendingEvent(sessionID); pendingCmd != nil {
@@ -2026,7 +2018,7 @@ func (m *appModel) applySidebarCollapsed(sessionID string) tea.Cmd {
 	if tab == nil || tab.pendingSidebarCollapsed == nil {
 		return nil
 	}
-	m.chatPage.SetSidebarSettings(chat.SidebarSettings{Collapsed: *tab.pendingSidebarCollapsed})
+	m.activeTab.chatPage.SetSidebarSettings(chat.SidebarSettings{Collapsed: *tab.pendingSidebarCollapsed})
 	tab.pendingSidebarCollapsed = nil
 	return m.resizeAll()
 }
@@ -2256,7 +2248,7 @@ func (m *appModel) resizeAll() tea.Cmd {
 	// Calculate chrome height (everything that isn't content or editor)
 	chromeHeight := 0
 	if m.leanMode {
-		if m.chatPage.IsWorking() || m.sessionState.PauseState() != service.PauseNone {
+		if m.activeTab.chatPage.IsWorking() || m.activeTab.sessionState.PauseState() != service.PauseNone {
 			chromeHeight = 1 // working/pause indicator line
 		}
 	} else {
@@ -2269,15 +2261,15 @@ func (m *appModel) resizeAll() tea.Cmd {
 	m.editorLines = max(minLines, min(m.editorLines, maxLines))
 
 	targetEditorHeight := m.editorLines - 1
-	cmds = append(cmds, m.editor.SetSize(innerWidth, targetEditorHeight))
-	_, editorHeight := m.editor.GetSize()
+	cmds = append(cmds, m.activeTab.editor.SetSize(innerWidth, targetEditorHeight))
+	_, editorHeight := m.activeTab.editor.GetSize()
 	// The editor's View() adds MarginBottom(1) which isn't included in GetSize(),
 	// so account for it in the layout calculation.
 	editorRenderedHeight := editorHeight + 1
 
 	// Content gets remaining space
 	m.contentHeight = max(1, height-chromeHeight-editorRenderedHeight)
-	cmds = append(cmds, m.chatPage.SetSize(width, m.contentHeight))
+	cmds = append(cmds, m.activeTab.chatPage.SetSize(width, m.contentHeight))
 
 	if m.leanMode {
 		return tea.Batch(cmds...)
@@ -2352,7 +2344,7 @@ func (m *appModel) AllBindings() []key.Binding {
 	}
 
 	if m.focusedPanel == PanelContent {
-		bindings = append(bindings, m.chatPage.Bindings()...)
+		bindings = append(bindings, m.activeTab.chatPage.Bindings()...)
 	} else {
 		editorName := editorname.FromEnv(os.Getenv("VISUAL"), os.Getenv("EDITOR"))
 		editExternal := keys.EditExternal
@@ -2415,7 +2407,7 @@ func (m *appModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "enter":
 			model, cmd := m.handleStopSpeak()
-			sendCmd := m.editor.SendContent()
+			sendCmd := m.activeTab.editor.SendContent()
 			return model, tea.Batch(cmd, sendCmd)
 
 		case "esc":
@@ -2446,7 +2438,7 @@ func (m *appModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// pending elicitations) which let tab-navigation keys keep working so
 	// the user can switch to another conversation while the prompt waits.
 	if m.dialogMgr.Open() {
-		if m.dialogMgr.TopIsBackground() && !m.leanMode && !m.editor.IsHistorySearchActive() {
+		if m.dialogMgr.TopIsBackground() && !m.leanMode && !m.activeTab.editor.IsHistorySearchActive() {
 			m.tabBar.SetCloseTabEnabled(true)
 			if cmd := m.tabBar.Update(msg); cmd != nil {
 				return m, cmd
@@ -2459,7 +2451,7 @@ func (m *appModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// history search so that ctrl+n/ctrl+p cycle through matches instead.
 	// Ctrl+w (close tab) is disabled when the editor is focused so that the
 	// standard "delete word" shortcut works while typing.
-	if !m.leanMode && !m.editor.IsHistorySearchActive() {
+	if !m.leanMode && !m.activeTab.editor.IsHistorySearchActive() {
 		m.tabBar.SetCloseTabEnabled(m.focusedPanel != PanelEditor)
 		if cmd := m.tabBar.Update(msg); cmd != nil {
 			return m, cmd
@@ -2509,7 +2501,7 @@ func (m *appModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// History search is a modal state — capture all remaining keys before normal routing
-	if m.focusedPanel == PanelEditor && m.editor.IsHistorySearchActive() {
+	if m.focusedPanel == PanelEditor && m.activeTab.editor.IsHistorySearchActive() {
 		return m.forwardEditor(msg)
 	}
 
@@ -2524,9 +2516,9 @@ func (m *appModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.openExternalEditor()
 
 	case key.Matches(msg, keys.HistorySearch):
-		if m.focusedPanel == PanelEditor && !m.editor.IsRecording() {
-			model, cmd := m.editor.EnterHistorySearch()
-			m.editor = model.(editor.Editor)
+		if m.focusedPanel == PanelEditor && !m.activeTab.editor.IsRecording() {
+			model, cmd := m.activeTab.editor.EnterHistorySearch()
+			m.activeTab.editor = model.(editor.Editor)
 			return m, cmd
 		}
 
@@ -2608,22 +2600,22 @@ func (m *appModel) switchFocus() (tea.Model, tea.Cmd) {
 		// left over from history (e.g. a previous "/toolset-restart <toolset>")
 		// never gets silently accepted in place of opening a fresh, current
 		// candidate popup - see regression test for the bug this guards against.
-		if cmd := m.editor.TryStartArgumentCompletion(); cmd != nil {
+		if cmd := m.activeTab.editor.TryStartArgumentCompletion(); cmd != nil {
 			return m, cmd
 		}
 		// Otherwise, accept a pending suggestion if there is one.
-		if cmd := m.editor.AcceptSuggestion(); cmd != nil {
+		if cmd := m.activeTab.editor.AcceptSuggestion(); cmd != nil {
 			return m, cmd
 		}
 		m.focusedPanel = PanelContent
 		m.statusBar.InvalidateCache()
-		m.editor.Blur()
-		return m, m.chatPage.FocusMessages()
+		m.activeTab.editor.Blur()
+		return m, m.activeTab.chatPage.FocusMessages()
 	case PanelContent:
 		m.focusedPanel = PanelEditor
 		m.statusBar.InvalidateCache()
-		m.chatPage.BlurMessages()
-		return m, m.editor.Focus()
+		m.activeTab.chatPage.BlurMessages()
+		return m, m.activeTab.editor.Focus()
 	}
 	return m, nil
 }
@@ -2636,8 +2628,8 @@ func sidebarVisualGeneration(page chat.Page) uint64 {
 }
 
 func (m *appModel) canRestorePointerCache(msg tea.Msg) bool {
-	if !m.viewCacheValid || m.tabBar == nil || m.chatPage == nil || m.isDragging || m.dialogMgr == nil || m.dialogMgr.Open() ||
-		m.chatPage.IsSelecting() || m.notification.Open() {
+	if !m.viewCacheValid || m.tabBar == nil || m.activeTab.chatPage == nil || m.isDragging || m.dialogMgr == nil || m.dialogMgr.Open() ||
+		m.activeTab.chatPage.IsSelecting() || m.notification.Open() {
 		return false
 	}
 	var x, y int
@@ -2673,7 +2665,7 @@ func (m *appModel) canRestorePointerCache(msg tea.Msg) bool {
 	if _, wheel := msg.(messages.WheelCoalescedMsg); wheel {
 		return true
 	}
-	page, ok := m.chatPage.(interface{ PointerTargetsMessages(x, y int) bool })
+	page, ok := m.activeTab.chatPage.(interface{ PointerTargetsMessages(x, y int) bool })
 	return ok && page.PointerTargetsMessages(x, y)
 }
 
@@ -2730,13 +2722,13 @@ func (m *appModel) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 		if m.focusedPanel != PanelEditor {
 			m.focusedPanel = PanelEditor
 			m.statusBar.InvalidateCache()
-			m.chatPage.BlurMessages()
+			m.activeTab.chatPage.BlurMessages()
 		}
 		// Adjust coordinates for editor padding
 		adjustedMsg := msg
 		adjustedMsg.X = msg.X - styles.AppPadding
 		adjustedMsg.Y = msg.Y - m.editorTop()
-		return m, tea.Batch(m.updateEditorCmd(adjustedMsg), m.editor.Focus())
+		return m, tea.Batch(m.updateEditorCmd(adjustedMsg), m.activeTab.editor.Focus())
 
 	case regionStatusBar:
 		if msg.Button == tea.MouseLeft && m.statusBar.ClickedNewTab(msg.X) {
@@ -2788,7 +2780,7 @@ func (m *appModel) handleMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd
 	// A text-selection drag must keep receiving motion wherever the cursor
 	// goes (editor, tab bar, status bar), otherwise the selection freezes
 	// and the release-copy pair is lost.
-	if m.chatPage.IsSelecting() {
+	if m.activeTab.chatPage.IsSelecting() {
 		model, cmd := m.forwardChat(msg)
 		return model, batchWith(cmd)
 	}
@@ -2832,7 +2824,7 @@ func (m *appModel) handleMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.C
 
 	// Finish a text-selection drag in the chat no matter where the button
 	// was released; this is what triggers the selection copy.
-	if m.chatPage.IsSelecting() {
+	if m.activeTab.chatPage.IsSelecting() {
 		return m.forwardChat(msg)
 	}
 
@@ -2865,7 +2857,7 @@ func (m *appModel) handleWheelCoalesced(msg messages.WheelCoalescedMsg) (tea.Mod
 	case regionContent:
 		return m.forwardChat(msg)
 	case regionEditor:
-		m.editor.ScrollByWheel(msg.Delta)
+		m.activeTab.editor.ScrollByWheel(msg.Delta)
 		return m, nil
 	}
 
@@ -2888,7 +2880,7 @@ func (m *appModel) hitTestRegion(y int) layoutRegion {
 	if m.leanMode {
 		return hitTestLeanRegion(y, m.contentHeight)
 	}
-	_, editorHeight := m.editor.GetSize()
+	_, editorHeight := m.activeTab.editor.GetSize()
 	return hitTestFullRegion(y, m.contentHeight, m.tabBar.Height(), editorHeight)
 }
 
@@ -2950,14 +2942,14 @@ func (m *appModel) handleEditorResize(y int) tea.Cmd {
 func (m *appModel) renderLeanWorkingIndicator() string {
 	innerWidth := m.width - appPaddingHorizontal
 	var line string
-	switch m.sessionState.PauseState() {
+	switch m.activeTab.sessionState.PauseState() {
 	case service.PausePaused:
 		line = styles.WarningStyle.Render("⏸ Paused") + " " + styles.MutedStyle.Render("(/pause to resume)")
 	case service.PausePausing:
 		line = m.workingSpinner.View() + " " + styles.WarningStyle.Render("Pausing… (finishing current request)")
 	default:
 		workingText := "Working\u2026"
-		if queueLen := m.chatPage.QueueLength(); queueLen > 0 {
+		if queueLen := m.activeTab.chatPage.QueueLength(); queueLen > 0 {
 			workingText = fmt.Sprintf("Working\u2026 (%d queued)", queueLen)
 		}
 		line = m.workingSpinner.View() + " " + styles.SpinnerDotsHighlightStyle.Render(workingText)
@@ -2993,21 +2985,21 @@ func (m *appModel) renderResizeHandle(width int) string {
 
 	var result string
 	switch {
-	case m.sessionState.PauseState() == service.PausePaused:
+	case m.activeTab.sessionState.PauseState() == service.PausePaused:
 		// Static indicator: the loop is idle until the user resumes.
 		resumeKey := styles.HighlightWhiteStyle.Render("/pause")
 		suffix := " " + styles.WarningStyle.Render("⏸ Paused") + " (" + resumeKey + " to resume)"
 		result = lineWithSuffix(fullLine, suffix, innerWidth)
 
-	case m.sessionState.PauseState() == service.PausePausing:
+	case m.activeTab.sessionState.PauseState() == service.PausePausing:
 		// The agent is finishing the in-flight request before it pauses.
 		suffix := " " + m.workingSpinner.View() + " " + styles.WarningStyle.Render("Pausing…") + " (finishing current request)"
 		result = lineWithSuffix(fullLine, suffix, innerWidth)
 
-	case m.chatPage.IsWorking():
+	case m.activeTab.chatPage.IsWorking():
 		// Truncate right side and append spinner (handle stays centered)
 		workingText := "Working…"
-		if queueLen := m.chatPage.QueueLength(); queueLen > 0 {
+		if queueLen := m.activeTab.chatPage.QueueLength(); queueLen > 0 {
 			workingText = fmt.Sprintf("Working… (%d queued)", queueLen)
 		}
 		suffix := " " + m.workingSpinner.View() + " " + styles.SpinnerDotsHighlightStyle.Render(workingText)
@@ -3015,8 +3007,8 @@ func (m *appModel) renderResizeHandle(width int) string {
 		suffix += " (" + cancelKeyPart + " to interrupt)"
 		result = lineWithSuffix(fullLine, suffix, innerWidth)
 
-	case m.chatPage.QueueLength() > 0:
-		queueText := fmt.Sprintf("%d queued", m.chatPage.QueueLength())
+	case m.activeTab.chatPage.QueueLength() > 0:
+		queueText := fmt.Sprintf("%d queued", m.activeTab.chatPage.QueueLength())
 		suffix := " " + styles.WarningStyle.Render(queueText) + " "
 		result = lineWithSuffix(fullLine, suffix, innerWidth)
 
@@ -3079,19 +3071,19 @@ func (m *appModel) composeView() tea.View {
 	}
 
 	// Content area (messages + sidebar) -- swaps per tab
-	contentView := m.chatPage.View()
+	contentView := m.activeTab.chatPage.View()
 
 	// Lean mode: editor appears right after the last message, with empty
 	// space pushed to the top via bottom-alignment.
 	if m.leanMode {
 		viewParts := []string{contentView}
-		if m.chatPage.IsWorking() || m.sessionState.PauseState() != service.PauseNone {
+		if m.activeTab.chatPage.IsWorking() || m.activeTab.sessionState.PauseState() != service.PauseNone {
 			viewParts = append(viewParts, m.renderLeanWorkingIndicator())
 		}
-		viewParts = append(viewParts, m.editor.View())
+		viewParts = append(viewParts, m.activeTab.editor.View())
 		inner := lipgloss.JoinVertical(lipgloss.Top, viewParts...)
 		baseView := lipgloss.PlaceVertical(m.height, lipgloss.Bottom, inner)
-		return toFullscreenView(baseView, windowTitle, m.chatPage.IsWorking(), m.leanMode)
+		return toFullscreenView(baseView, windowTitle, m.activeTab.chatPage.IsWorking(), m.leanMode)
 	}
 
 	// Resize handle (between content and bottom panel)
@@ -3101,7 +3093,7 @@ func (m *appModel) composeView() tea.View {
 	tabBarView := m.tabBar.View()
 
 	// Editor (fixed position, per-session state)
-	editorView := m.editor.View()
+	editorView := m.activeTab.editor.View()
 
 	// Status bar
 	statusBarView := m.statusBar.View()
@@ -3160,14 +3152,14 @@ func (m *appModel) fullscreenView(content, windowTitle string) tea.View {
 	if m.imageWriter != nil {
 		content = m.imageWriter.SetContent(content)
 	}
-	return toFullscreenView(content, windowTitle, m.chatPage.IsWorking(), m.leanMode)
+	return toFullscreenView(content, windowTitle, m.activeTab.chatPage.IsWorking(), m.leanMode)
 }
 
 // windowTitle returns the terminal window title for the current model state.
 // When the agent is working, a rotating spinner character is prepended so that
 // terminal multiplexers (tmux) can detect activity in the pane.
 func (m *appModel) windowTitle() string {
-	return formatWindowTitle(m.ar.Now(), m.appName, m.sessionState.SessionTitle(), m.chatPage.IsWorking())
+	return formatWindowTitle(m.ar.Now(), m.appName, m.activeTab.sessionState.SessionTitle(), m.activeTab.chatPage.IsWorking())
 }
 
 // formatWindowTitle assembles the terminal window title string from the
@@ -3313,7 +3305,7 @@ func (m *appModel) cleanupAll() {
 
 // openExternalEditor opens the current editor content in an external editor.
 func (m *appModel) openExternalEditor() (tea.Model, tea.Cmd) {
-	content := m.editor.Value()
+	content := m.activeTab.editor.Value()
 
 	// Create a temporary file with the current content
 	tmpFile, err := os.CreateTemp("", "cagent-*.md")
@@ -3331,7 +3323,7 @@ func (m *appModel) openExternalEditor() (tea.Model, tea.Cmd) {
 
 	cmd := editorname.Command(tmpPath)
 
-	ed := m.editor
+	ed := m.activeTab.editor
 	return m, tea.ExecProcess(cmd, externalEditorCallback(ed, tmpPath))
 }
 

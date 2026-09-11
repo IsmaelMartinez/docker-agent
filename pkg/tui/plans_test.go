@@ -37,7 +37,7 @@ func newPlansTestModel(t *testing.T) (*appModel, plans.Service) {
 
 	sess := session.New()
 	m.application = app.New(t.Context(), stubRuntime{}, sess)
-	m.sessionState = service.NewSessionState(sess)
+	m.activeTab.sessionState = service.NewSessionState(sess)
 	return m, svc
 }
 
