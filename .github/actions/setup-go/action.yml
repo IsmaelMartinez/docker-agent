@@ -13,6 +13,10 @@ inputs:
     description: Build cache namespace; defaults to the job id.
     required: false
     default: ${{ github.job }}
+  cache-version:
+    description: All-platform Go-cache invalidation version.
+    required: false
+    default: '2'
   save:
     description: Save the build cache on main. Set false for jobs that share another job's namespace.
     required: false
@@ -29,6 +33,20 @@ runs:
       with:
         go-version-file: go.mod
         cache: false
+
+    - if: runner.os == 'Windows'
+      name: Configure Windows Go paths
+      shell: pwsh
+      run: |
+        $paths = @{
+          GOCACHE = Join-Path $env:RUNNER_TEMP 'go-build'
+          GOMODCACHE = Join-Path $env:RUNNER_TEMP 'go-mod'
+          GOTMPDIR = Join-Path $env:RUNNER_TEMP 'go-tmp'
+        }
+        $paths.Values | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null }
+        foreach ($entry in $paths.GetEnumerator()) {
+          go env -w "$($entry.Key)=$($entry.Value)"
+        }
 
     - if: inputs.task == 'true'
       uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
@@ -51,31 +69,31 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.paths.outputs.mod }}
-        key: gomod-${{ runner.os }}-${{ hashFiles('go.sum') }}
-        restore-keys: gomod-${{ runner.os }}-
+        key: gomod-v${{ inputs.cache-version }}-${{ runner.os }}-${{ hashFiles('go.sum') }}
+        restore-keys: gomod-v${{ inputs.cache-version }}-${{ runner.os }}-
 
     - if: github.ref != 'refs/heads/main'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.paths.outputs.mod }}
-        key: gomod-${{ runner.os }}-${{ hashFiles('go.sum') }}
-        restore-keys: gomod-${{ runner.os }}-
+        key: gomod-v${{ inputs.cache-version }}-${{ runner.os }}-${{ hashFiles('go.sum') }}
+        restore-keys: gomod-v${{ inputs.cache-version }}-${{ runner.os }}-
 
     # Build cache: per job, SHA suffix so main refreshes it on every push.
     - if: github.ref == 'refs/heads/main' && inputs.save == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.paths.outputs.build }}
-        key: gobuild-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+        key: gobuild-v${{ inputs.cache-version }}-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
         restore-keys: |
-          gobuild-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-
-          gobuild-${{ runner.os }}-${{ inputs.cache-name }}-
+          gobuild-v${{ inputs.cache-version }}-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-
+          gobuild-v${{ inputs.cache-version }}-${{ runner.os }}-${{ inputs.cache-name }}-
 
     - if: github.ref != 'refs/heads/main' || inputs.save != 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.paths.outputs.build }}
-        key: gobuild-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+        key: gobuild-v${{ inputs.cache-version }}-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
         restore-keys: |
-          gobuild-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-
-          gobuild-${{ runner.os }}-${{ inputs.cache-name }}-
+          gobuild-v${{ inputs.cache-version }}-${{ runner.os }}-${{ inputs.cache-name }}-${{ hashFiles('go.sum') }}-
+          gobuild-v${{ inputs.cache-version }}-${{ runner.os }}-${{ inputs.cache-name }}-
