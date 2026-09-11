@@ -134,12 +134,8 @@ type appModel struct {
 	// exclusively from Update.
 	planExportsInFlight map[string]struct{}
 
-	// Per-session chat pages (kept alive for streaming continuity)
-	chatPages     map[string]chat.Page
-	sessionStates map[string]*service.SessionState
-
-	// Per-session editors (preserved across tab switches for draft text)
-	editors map[string]editor.Editor
+	// Tabs retain UI components and pending restore state across switches.
+	tabs map[string]*tabModel
 
 	// Active session (convenience pointers to the currently visible session)
 	application  *app.App
@@ -232,32 +228,6 @@ type appModel struct {
 	// reports) is enabled. Set when the auto theme turns the mode on, so the
 	// quit path knows to reset it and leave no stray reports in the shell.
 	lightDarkModeSet bool
-
-	// pendingRestores maps runtime tab IDs (supervisor routing keys) to
-	// persisted session-store IDs. When a tab with a pending restore is first
-	// switched to, the persisted session is loaded via replaceActiveSession —
-	// the same code path as the /sessions command.
-	//
-	// This map also serves as the authoritative source for "which persisted
-	// session ID does this tab represent?" until the restore completes, at
-	// which point the app's live session ID takes over.
-	pendingRestores map[string]string
-
-	// pendingSidebarCollapsed maps runtime tab IDs to their persisted sidebar
-	// collapsed state. Consumed when a chat page is first created for a
-	// restored tab (in handleSwitchTab) and then removed from the map.
-	pendingSidebarCollapsed map[string]bool
-
-	// stashedDialogs holds background dialog instances that were on screen
-	// when the user navigated away from a tab. The dialog instance preserves
-	// in-progress input (e.g. text typed into a user_prompt elicitation) so
-	// that returning to the tab restores the same dialog rather than
-	// rebuilding a fresh one from the originating runtime event.
-	//
-	// The stored event is matched against the supervisor's pending event on
-	// return: if they no longer match (because the agent superseded the
-	// prompt) the stashed dialog is discarded and a fresh one is built.
-	stashedDialogs map[string]stashedDialog
 
 	// pendingActiveTab is the tab ID to switch to on Init(). Set when the
 	// previously focused tab differs from the initial tab.
@@ -533,16 +503,11 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 		supervisor:                    sv,
 		tabBar:                        tb,
 		tuiStore:                      ts,
-		chatPages:                     map[string]chat.Page{},
-		editors:                       map[string]editor.Editor{},
-		sessionStates:                 map[string]*service.SessionState{sessID: initialSessionState},
+		tabs:                          map[string]*tabModel{sessID: {sessionState: initialSessionState}},
 		application:                   initialApp,
 		ctx:                           tuiCtx,
 		sessionState:                  initialSessionState,
 		history:                       historyStore,
-		pendingRestores:               make(map[string]string),
-		pendingSidebarCollapsed:       make(map[string]bool),
-		stashedDialogs:                make(map[string]stashedDialog),
 		notification:                  notification.New(),
 		dialogMgr:                     dialog.New(),
 		completions:                   completion.New(),
@@ -568,13 +533,13 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 
 	// Create initial editor (after options are applied so command builder is set)
 	initialEditor := editor.New(historyStore, m.editorOpts()...)
-	m.editors[sessID] = initialEditor
+	m.tabs[sessID].editor = initialEditor
 	m.editor = initialEditor
 
 	// Create initial chat page (after options are applied so leanMode is set)
 	initialChatPage := chat.New(m.ar, m.ctx(), initialApp, initialSessionState, m.chatPageOpts()...)
 	initialChatPage.SetRoutingID(sessID)
-	m.chatPages[sessID] = initialChatPage
+	m.tabs[sessID].chatPage = initialChatPage
 	m.chatPage = initialChatPage
 
 	// Initialize status bar (pass m as help provider)
@@ -712,20 +677,21 @@ func (m *appModel) editorOpts() []editor.Option {
 }
 
 // initSessionComponents creates a new chat page, session state, and editor for
-// the given app and stores them in the per-session maps under tabID. The active
-// convenience pointers (m.chatPage, m.sessionState, m.editor) are also updated.
+// the given app and stores them in its tab. The active convenience pointers
+// (m.chatPage, m.sessionState, m.editor) are also updated.
 func (m *appModel) initSessionComponents(tabID string, a *app.App, sess *session.Session) {
-	if old := m.chatPages[tabID]; old != nil {
-		chat.Cleanup(old)
+	tab := m.ensureTab(tabID)
+	if tab.chatPage != nil {
+		chat.Cleanup(tab.chatPage)
 	}
 	ss := service.NewSessionState(sess)
 	cp := chat.New(m.ar, m.ctx(), a, ss, m.chatPageOpts()...)
 	cp.SetRoutingID(tabID)
 	ed := editor.New(m.history, m.editorOpts()...)
 
-	m.chatPages[tabID] = cp
-	m.sessionStates[tabID] = ss
-	m.editors[tabID] = ed
+	tab.chatPage = cp
+	tab.sessionState = ss
+	tab.editor = ed
 
 	m.application = a
 	m.sessionState = ss
@@ -819,8 +785,9 @@ func (m *appModel) init() tea.Cmd {
 	// If the initial tab has a pending session restore, go through
 	// replaceActiveSession — the same code path as the /sessions command.
 	activeID := m.supervisor.ActiveID()
-	if oldSessionID, ok := m.pendingRestores[activeID]; ok {
-		delete(m.pendingRestores, activeID)
+	if tab := m.tabs[activeID]; tab != nil && tab.pendingRestore != nil {
+		oldSessionID := *tab.pendingRestore
+		tab.pendingRestore = nil
 		if store := m.application.SessionStore(); store != nil {
 			if sess, err := store.GetSession(m.ctx(), oldSessionID); err == nil {
 				_, cmd := m.replaceActiveSession(m.ctx(), sess)
@@ -1227,10 +1194,6 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// --- SendMsg from editor ---
 
-	case messages.RestorePendingMessagesMsg:
-		m.editor.SetValue(msg.Content)
-		return m, m.editor.Focus()
-
 	case messages.SendMsg:
 		// Forward send messages to the active content view
 		if m.history != nil && !msg.BypassQueue {
@@ -1551,14 +1514,14 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 
 	// Background session: update its chat page directly so streaming content accumulates.
 	// UI-only cmds (spinners, scroll) are discarded since the page isn't visible.
-	chatPage, ok := m.chatPages[msg.SessionID]
-	if !ok {
+	tab := m.tabs[msg.SessionID]
+	if tab == nil || tab.chatPage == nil {
 		return m, nil
 	}
 
 	// Update session state for inactive sessions
 	if event, isRuntimeEvent := msg.Inner.(runtime.Event); isRuntimeEvent {
-		if sessionState, ok := m.sessionStates[msg.SessionID]; ok {
+		if sessionState := tab.sessionState; sessionState != nil {
 			// Token-usage events are accounting, not agent-switch signals: a
 			// background agent task's usage can arrive while the tab is idle
 			// and must not move the current-agent marker to that agent.
@@ -1575,9 +1538,9 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 	// except its routed one-shot timers: presentation deadlines (e.g. the sidebar's transfer box)
 	// must keep running while the tab is hidden, and their expiry lands back here as a RoutedMsg
 	// for this page. Applying such a timer arms no new ones, so this cannot loop.
-	updated, _ := chatPage.Update(msg.Inner)
+	updated, _ := tab.chatPage.Update(msg.Inner)
 	page := updated.(chat.Page)
-	m.chatPages[msg.SessionID] = page
+	tab.chatPage = page
 
 	// Shared plans are scope-global: a mutation from a background tab's agent
 	// must still live-refresh the plan dialogs open on the active tab.
@@ -1748,8 +1711,8 @@ func (m *appModel) replaceActiveSession(ctx context.Context, sess *session.Sessi
 	slog.DebugContext(ctx, "Replacing empty session in-place", "tab_id", activeID, "loaded_session", sess.ID)
 
 	// Cleanup old editor for the active session
-	if ed, ok := m.editors[activeID]; ok {
-		ed.Cleanup()
+	if tab := m.tabs[activeID]; tab != nil && tab.editor != nil {
+		tab.editor.Cleanup()
 	}
 
 	// If the loaded session's working directory differs from the runner's,
@@ -1789,8 +1752,8 @@ func (m *appModel) handleClearSession() (tea.Model, tea.Cmd) {
 	activeID := m.supervisor.ActiveID()
 
 	// Cleanup old editor for the active session.
-	if ed, ok := m.editors[activeID]; ok {
-		ed.Cleanup()
+	if tab := m.tabs[activeID]; tab != nil && tab.editor != nil {
+		tab.editor.Cleanup()
 	}
 
 	// Create a fresh session in the same app, preserving the working dir.
@@ -1969,7 +1932,7 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	if backgroundEvent != nil && outgoingTabID != "" && outgoingTabID != sessionID {
 		m.supervisor.SetPendingEvent(outgoingTabID, backgroundEvent)
 		if backgroundDialog != nil {
-			m.stashedDialogs[outgoingTabID] = stashedDialog{
+			m.ensureTab(outgoingTabID).stashedDialog = &stashedDialog{
 				dialog: backgroundDialog,
 				event:  backgroundEvent,
 			}
@@ -1982,8 +1945,10 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 
 	// If this tab has a pending session restore, load it through
 	// replaceActiveSession — the same code path as the /sessions command.
-	if oldSessionID, ok := m.pendingRestores[sessionID]; ok {
-		delete(m.pendingRestores, sessionID)
+	tab := m.ensureTab(sessionID)
+	if tab.pendingRestore != nil {
+		oldSessionID := *tab.pendingRestore
+		tab.pendingRestore = nil
 		m.application = runner.App
 		if store := runner.App.SessionStore(); store != nil {
 			if sess, err := store.GetSession(m.ctx(), oldSessionID); err == nil {
@@ -2004,8 +1969,8 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	}
 
 	// Get or create per-session components.
-	_, pageExists := m.chatPages[sessionID]
-	_, editorExists := m.editors[sessionID]
+	pageExists := tab.chatPage != nil
+	editorExists := tab.editor != nil
 
 	if !pageExists || !editorExists {
 		// Create all missing components at once.
@@ -2014,9 +1979,9 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	} else {
 		// Reuse existing components — just update convenience pointers.
 		m.application = runner.App
-		m.sessionState = m.sessionStates[sessionID]
-		m.chatPage = m.chatPages[sessionID]
-		m.editor = m.editors[sessionID]
+		m.sessionState = tab.sessionState
+		m.chatPage = tab.chatPage
+		m.editor = tab.editor
 	}
 
 	m.reapplyKeyboardEnhancements()
@@ -2057,12 +2022,12 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 // applySidebarCollapsed applies and consumes the persisted sidebar collapsed state
 // for the given tab ID. Returns a resize command if the state was applied, nil otherwise.
 func (m *appModel) applySidebarCollapsed(sessionID string) tea.Cmd {
-	collapsed, ok := m.pendingSidebarCollapsed[sessionID]
-	if !ok {
+	tab := m.tabs[sessionID]
+	if tab == nil || tab.pendingSidebarCollapsed == nil {
 		return nil
 	}
-	m.chatPage.SetSidebarSettings(chat.SidebarSettings{Collapsed: collapsed})
-	delete(m.pendingSidebarCollapsed, sessionID)
+	m.chatPage.SetSidebarSettings(chat.SidebarSettings{Collapsed: *tab.pendingSidebarCollapsed})
+	tab.pendingSidebarCollapsed = nil
 	return m.resizeAll()
 }
 
@@ -2079,9 +2044,12 @@ func (m *appModel) applySidebarCollapsed(sessionID string) tea.Cmd {
 // re-opened so any in-progress input survives the round trip (issue #2770).
 // Otherwise the stash is discarded and a fresh dialog is built.
 func (m *appModel) replayPendingEvent(sessionID string) tea.Cmd {
-	sessionState, ok := m.sessionStates[sessionID]
-	if !ok {
-		delete(m.stashedDialogs, sessionID)
+	tab := m.tabs[sessionID]
+	if tab == nil {
+		return nil
+	}
+	if tab.sessionState == nil {
+		tab.stashedDialog = nil
 		return nil
 	}
 
@@ -2091,7 +2059,7 @@ func (m *appModel) replayPendingEvent(sessionID string) tea.Cmd {
 		if pendingEvent == nil {
 			if first {
 				// No pending event at all: any stash is stale (e.g. the agent finished).
-				delete(m.stashedDialogs, sessionID)
+				tab.stashedDialog = nil
 			}
 			break
 		}
@@ -2100,8 +2068,8 @@ func (m *appModel) replayPendingEvent(sessionID string) tea.Cmd {
 		// instance: the stash holds exactly the one dialog that was on
 		// screen when the user left the tab.
 		if first {
-			if stash, ok := m.stashedDialogs[sessionID]; ok {
-				delete(m.stashedDialogs, sessionID)
+			if stash := tab.stashedDialog; stash != nil {
+				tab.stashedDialog = nil
 				if stash.event == pendingEvent && stash.dialog != nil {
 					cmds = append(cmds, core.CmdHandler(dialog.OpenDialogMsg{
 						Model:            stash.dialog,
@@ -2112,7 +2080,7 @@ func (m *appModel) replayPendingEvent(sessionID string) tea.Cmd {
 			}
 		}
 
-		if cmd := m.dialogCmdForPendingEvent(pendingEvent, sessionState); cmd != nil {
+		if cmd := m.dialogCmdForPendingEvent(pendingEvent, tab.sessionState); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -2218,18 +2186,15 @@ func (m *appModel) handleCloseTab(sessionID string) (tea.Model, tea.Cmd) {
 	nextActiveID := m.supervisor.CloseSession(sessionID)
 
 	// Clean up per-session state
-	if page, ok := m.chatPages[sessionID]; ok {
-		chat.Cleanup(page)
+	if tab := m.tabs[sessionID]; tab != nil {
+		if tab.chatPage != nil {
+			chat.Cleanup(tab.chatPage)
+		}
+		if tab.editor != nil {
+			tab.editor.Cleanup()
+		}
 	}
-	delete(m.chatPages, sessionID)
-	if ed, ok := m.editors[sessionID]; ok {
-		ed.Cleanup()
-		delete(m.editors, sessionID)
-	}
-	delete(m.sessionStates, sessionID)
-	delete(m.pendingRestores, sessionID)
-	delete(m.pendingSidebarCollapsed, sessionID)
-	delete(m.stashedDialogs, sessionID)
+	delete(m.tabs, sessionID)
 
 	var cmds []tea.Cmd
 	// Remove from persistent store using the persisted session-store ID.
@@ -3284,11 +3249,15 @@ func (m *appModel) cleanupAll() {
 	m.cleanupAllOnce.Do(func() {
 		m.transcriber.Stop()
 		m.closeTranscriptCh()
-		for _, ed := range m.editors {
-			ed.Cleanup()
+		for _, tab := range m.tabs {
+			if tab.editor != nil {
+				tab.editor.Cleanup()
+			}
 		}
-		for _, page := range m.chatPages {
-			chat.Cleanup(page)
+		for _, tab := range m.tabs {
+			if tab.chatPage != nil {
+				chat.Cleanup(tab.chatPage)
+			}
 		}
 
 		// Shut down managed resources (supervisor, TUI state store) in the

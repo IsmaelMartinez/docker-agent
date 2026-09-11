@@ -102,9 +102,6 @@ type (
 	// ClearQueueMsg clears all queued messages.
 	ClearQueueMsg struct{}
 
-	// RestorePendingMessagesMsg restores canceled pending messages to the editor.
-	RestorePendingMessagesMsg struct{ Content string }
-
 	// ToggleSplitDiffMsg toggles split diff view mode.
 	ToggleSplitDiffMsg struct{}
 

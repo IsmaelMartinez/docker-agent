@@ -40,10 +40,6 @@ func (p *chatPage) handleKeyPress(msg tea.KeyPressMsg) (layout.Model, tea.Cmd) {
 	}
 
 	switch {
-	case key.Matches(msg, key.NewBinding(key.WithKeys("alt+up"))):
-		cmd := p.restorePendingMessages()
-		return p, cmd
-
 	case key.Matches(msg, p.keyMap.Cancel):
 		// If inline editing is active, cancel the edit first
 		if p.messages.IsInlineEditing() {

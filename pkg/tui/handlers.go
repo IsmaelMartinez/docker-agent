@@ -929,7 +929,11 @@ func (m *appModel) handleApplySettings(msg messages.ApplySettingsMsg) (tea.Model
 	m.sendMode = messages.ParseSendMode(string(preferences.SendMode))
 	m.interruptMode = messages.ParseInterruptMode(string(preferences.InterruptConfirmation))
 	m.showBanner = preferences.ShowBanner
-	for _, page := range m.chatPages {
+	for _, tab := range m.tabs {
+		page := tab.chatPage
+		if page == nil {
+			continue
+		}
 		page.SetSendMode(m.sendMode)
 		page.SetInterruptMode(m.interruptMode)
 		page.SetShowBanner(m.showBanner)
@@ -963,7 +967,11 @@ func (m *appModel) applyLayoutSettings(settings messages.LayoutSettings) (tea.Mo
 	m.layoutSettings = settings
 
 	var cmds []tea.Cmd
-	for _, page := range m.chatPages {
+	for _, tab := range m.tabs {
+		page := tab.chatPage
+		if page == nil {
+			continue
+		}
 		if cmd := page.SetLayoutSettings(settings); cmd != nil {
 			cmds = append(cmds, cmd)
 		}

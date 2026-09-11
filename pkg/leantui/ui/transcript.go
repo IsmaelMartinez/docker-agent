@@ -25,7 +25,6 @@ const (
 )
 
 type PendingUserMessage struct {
-	ID      string
 	Display string
 	Content string
 	Kind    PendingUserKind

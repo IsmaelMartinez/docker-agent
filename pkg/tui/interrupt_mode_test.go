@@ -102,7 +102,7 @@ func TestHandleApplySettings_RetainsInterruptMode(t *testing.T) {
 
 	m := newApplySettingsModel(t)
 	second := &mockChatPage{}
-	m.chatPages["second"] = second
+	m.ensureTab("second").chatPage = second
 
 	prefs := defaultTestPreferences()
 	prefs.InterruptConfirmation = messages.InterruptModeNone

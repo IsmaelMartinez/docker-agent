@@ -56,7 +56,7 @@ func TestHandleApplySettings_AppliesShowBanner(t *testing.T) {
 
 	m := newApplySettingsModel(t)
 	second := &mockChatPage{showBanner: true}
-	m.chatPages["second"] = second
+	m.ensureTab("second").chatPage = second
 
 	prefs := defaultTestPreferences()
 	prefs.ShowBanner = false

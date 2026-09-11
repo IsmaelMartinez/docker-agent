@@ -2073,16 +2073,6 @@ func (r *LocalRuntime) FollowUp(ctx context.Context, msg QueuedMessage) error {
 	return nil
 }
 
-func (r *LocalRuntime) CancelSteer(_ context.Context, id string) bool {
-	q, ok := r.steerQueue.(cancelableMessageQueue)
-	return ok && q.Cancel(id)
-}
-
-func (r *LocalRuntime) CancelFollowUp(_ context.Context, id string) bool {
-	q, ok := r.followUpQueue.(cancelableMessageQueue)
-	return ok && q.Cancel(id)
-}
-
 // SetRecallHandler registers an embedder-owned wake-up path for tool recalls.
 // When unset, recalls fall back to the steer queue and are consumed by the next
 // active RunStream.
@@ -2112,10 +2102,12 @@ func (r *LocalRuntime) recall(ctx context.Context, msg QueuedMessage) error {
 func (r *LocalRuntime) QueueStatus() QueueStatus {
 	status := QueueStatus{}
 	if steerQ, ok := r.steerQueue.(*inMemoryMessageQueue); ok {
-		status.SteerDepth, status.SteerCapacity = steerQ.status()
+		status.SteerDepth = len(steerQ.ch)
+		status.SteerCapacity = cap(steerQ.ch)
 	}
 	if followupQ, ok := r.followUpQueue.(*inMemoryMessageQueue); ok {
-		status.FollowupDepth, status.FollowupCapacity = followupQ.status()
+		status.FollowupDepth = len(followupQ.ch)
+		status.FollowupCapacity = cap(followupQ.ch)
 	}
 	return status
 }
