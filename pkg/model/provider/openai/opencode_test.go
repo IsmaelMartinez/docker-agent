@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 
@@ -15,60 +16,9 @@ import (
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/httpclient"
+	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/model/provider/options"
 )
-
-func TestIsOpenCodeProvider(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		cfg  *latest.ModelConfig
-		want bool
-	}{
-		{name: "nil config", cfg: nil, want: false},
-		{name: "opencode-go alias", cfg: &latest.ModelConfig{Provider: "opencode-go"}, want: true},
-		{name: "opencode-zen alias", cfg: &latest.ModelConfig{Provider: "opencode-zen"}, want: true},
-		{
-			name: "custom provider on opencode.ai",
-			cfg:  &latest.ModelConfig{Provider: "custom", BaseURL: "https://opencode.ai/zen/go/v1"},
-			want: true,
-		},
-		{
-			name: "custom provider on opencode.ai subdomain",
-			cfg:  &latest.ModelConfig{Provider: "custom", BaseURL: "https://eu.opencode.ai/zen/v1"},
-			want: true,
-		},
-		{
-			name: "lookalike host is not opencode",
-			cfg:  &latest.ModelConfig{Provider: "custom", BaseURL: "https://notopencode.ai/v1"},
-			want: false,
-		},
-		{
-			name: "opencode.ai in path only",
-			cfg:  &latest.ModelConfig{Provider: "custom", BaseURL: "https://evil.example/opencode.ai/v1"},
-			want: false,
-		},
-		{name: "openai", cfg: &latest.ModelConfig{Provider: "openai"}, want: false},
-		{name: "github-copilot", cfg: &latest.ModelConfig{Provider: "github-copilot", BaseURL: "https://api.githubcopilot.com"}, want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.want, isOpenCodeProvider(tt.cfg))
-		})
-	}
-}
-
-func TestOpenCodeSessionIDIsStableAndOpaque(t *testing.T) {
-	t.Parallel()
-	a := opencodeSessionID("session-a")
-	b := opencodeSessionID("session-b")
-
-	assert.Equal(t, a, opencodeSessionID("session-a"), "same session must map to the same header value")
-	assert.NotEqual(t, a, b, "different sessions must map to different header values")
-	assert.NotEqual(t, "session-a", a, "raw session ID must not leak")
-	_, err := uuid.Parse(a)
-	require.NoError(t, err, "header value must be a UUID")
-}
 
 // startOpenCodeCapture returns a fake OpenAI-compatible endpoint that records
 // the x-opencode-session header of every request.
@@ -78,7 +28,7 @@ func startOpenCodeCapture(t *testing.T) (*httptest.Server, func() []string) {
 	var seen []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		seen = append(seen, r.Header.Get(opencodeSessionHeader))
+		seen = append(seen, r.Header.Get(base.OpenCodeSessionHeader))
 		mu.Unlock()
 		writeSSEResponse(w)
 	}))
@@ -90,15 +40,53 @@ func startOpenCodeCapture(t *testing.T) (*httptest.Server, func() []string) {
 	}
 }
 
-func newOpenCodeTestClient(t *testing.T, cfg *latest.ModelConfig) *Client {
+// redirectTo returns a transport wrapper that sends every request to target,
+// so a client configured for opencode.ai (the only signal the host check has
+// for a custom provider) can be exercised against a local server, plus a
+// snapshot of the session header the wrapper itself was handed.
+func redirectTo(t *testing.T, target string) (options.Opt, func() []string) {
+	t.Helper()
+	u, err := url.Parse(target)
+	require.NoError(t, err)
+	r := &redirectTransport{to: u}
+	opt := options.WithHTTPTransportWrapper(func(next http.RoundTripper) http.RoundTripper {
+		r.next = next
+		return r
+	})
+	return opt, func() []string {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return append([]string(nil), r.seen...)
+	}
+}
+
+type redirectTransport struct {
+	next http.RoundTripper
+	to   *url.URL
+	mu   sync.Mutex
+	seen []string
+}
+
+func (r *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.mu.Lock()
+	r.seen = append(r.seen, req.Header.Get(base.OpenCodeSessionHeader))
+	r.mu.Unlock()
+	req = req.Clone(req.Context())
+	req.URL.Scheme = r.to.Scheme
+	req.URL.Host = r.to.Host
+	req.Host = r.to.Host
+	return r.next.RoundTrip(req)
+}
+
+func newOpenCodeTestClient(t *testing.T, cfg *latest.ModelConfig, opts ...options.Opt) *Client {
 	t.Helper()
 	env := environment.NewMapEnvProvider(map[string]string{"OPENCODE_API_KEY": "test-key"})
-	client, err := NewClient(t.Context(), cfg, env)
+	client, err := NewClient(t.Context(), cfg, env, opts...)
 	require.NoError(t, err)
 	return client
 }
 
-func streamOnce(t *testing.T, client *Client, ctx context.Context) {
+func streamOnce(t *testing.T, ctx context.Context, client *Client) {
 	t.Helper()
 	stream, err := client.CreateChatCompletionStream(ctx, []chat.Message{
 		{Role: chat.MessageRoleUser, Content: "hello"},
@@ -113,6 +101,7 @@ func streamOnce(t *testing.T, client *Client, ctx context.Context) {
 }
 
 func TestOpenCodeSessionHeaderDerivedFromContext(t *testing.T) {
+	t.Parallel()
 	server, seen := startOpenCodeCapture(t)
 	client := newOpenCodeTestClient(t, &latest.ModelConfig{
 		Provider: "opencode-go",
@@ -126,19 +115,49 @@ func TestOpenCodeSessionHeaderDerivedFromContext(t *testing.T) {
 
 	ctxA := httpclient.ContextWithSessionID(t.Context(), "conversation-a")
 	ctxB := httpclient.ContextWithSessionID(t.Context(), "conversation-b")
-	streamOnce(t, client, ctxA)
-	streamOnce(t, client, ctxA)
-	streamOnce(t, client, ctxB)
+	streamOnce(t, ctxA, client)
+	streamOnce(t, ctxA, client)
+	streamOnce(t, ctxB, client)
 
 	got := seen()
 	require.Len(t, got, 3)
-	assert.Equal(t, opencodeSessionID("conversation-a"), got[0])
+	_, err := uuid.Parse(got[0])
+	require.NoError(t, err, "header value must be a UUID")
+	assert.NotEqual(t, "conversation-a", got[0], "raw session ID must not leak")
 	assert.Equal(t, got[0], got[1], "one conversation must keep one stable ID across requests")
-	assert.Equal(t, opencodeSessionID("conversation-b"), got[2])
 	assert.NotEqual(t, got[0], got[2], "distinct conversations on a shared client must not share an ID")
 }
 
+func TestOpenCodeSessionHeaderOnCustomProvider(t *testing.T) {
+	t.Parallel()
+	server, seen := startOpenCodeCapture(t)
+	redirect, wrapperSaw := redirectTo(t, server.URL)
+	// A custom OpenAI-compatible provider reaches this client with the
+	// OpenCode base URL and no alias (see provider.mergeFromProviderConfig).
+	client := newOpenCodeTestClient(t, &latest.ModelConfig{
+		Provider: "openai",
+		Model:    "kimi-k2.6",
+		BaseURL:  "https://opencode.ai/zen/v1",
+		TokenKey: "OPENCODE_API_KEY",
+		ProviderOpts: map[string]any{
+			"api_type": "openai_chatcompletions",
+		},
+	}, redirect)
+
+	ctxA := httpclient.ContextWithSessionID(t.Context(), "conversation-a")
+	streamOnce(t, ctxA, client)
+	streamOnce(t, httpclient.ContextWithSessionID(t.Context(), "conversation-b"), client)
+
+	got := seen()
+	require.Len(t, got, 2)
+	_, err := uuid.Parse(got[0])
+	require.NoError(t, err, "header value must be a UUID")
+	assert.NotEqual(t, got[0], got[1], "distinct conversations on a shared client must not share an ID")
+	assert.Equal(t, got, wrapperSaw(), "a registered transport wrapper must see the header on every request")
+}
+
 func TestOpenCodeSessionHeaderFallsBackWithoutSession(t *testing.T) {
+	t.Parallel()
 	server, seen := startOpenCodeCapture(t)
 	client := newOpenCodeTestClient(t, &latest.ModelConfig{
 		Provider: "opencode-zen",
@@ -150,8 +169,8 @@ func TestOpenCodeSessionHeaderFallsBackWithoutSession(t *testing.T) {
 		},
 	})
 
-	streamOnce(t, client, t.Context())
-	streamOnce(t, client, t.Context())
+	streamOnce(t, t.Context(), client)
+	streamOnce(t, t.Context(), client)
 
 	got := seen()
 	require.Len(t, got, 2)
@@ -162,6 +181,7 @@ func TestOpenCodeSessionHeaderFallsBackWithoutSession(t *testing.T) {
 }
 
 func TestOpenCodeSessionHeaderUserOverrideWins(t *testing.T) {
+	t.Parallel()
 	server, seen := startOpenCodeCapture(t)
 	client := newOpenCodeTestClient(t, &latest.ModelConfig{
 		Provider: "opencode-go",
@@ -176,7 +196,7 @@ func TestOpenCodeSessionHeaderUserOverrideWins(t *testing.T) {
 		},
 	})
 
-	streamOnce(t, client, httpclient.ContextWithSessionID(t.Context(), "conversation-a"))
+	streamOnce(t, httpclient.ContextWithSessionID(t.Context(), "conversation-a"), client)
 
 	got := seen()
 	require.Len(t, got, 1)
@@ -184,6 +204,7 @@ func TestOpenCodeSessionHeaderUserOverrideWins(t *testing.T) {
 }
 
 func TestOpenCodeSessionHeaderNotSentToOtherProviders(t *testing.T) {
+	t.Parallel()
 	server, seen := startOpenCodeCapture(t)
 	env := environment.NewMapEnvProvider(map[string]string{"OPENAI_API_KEY": "test-key"})
 	client, err := NewClient(t.Context(), &latest.ModelConfig{
@@ -196,9 +217,33 @@ func TestOpenCodeSessionHeaderNotSentToOtherProviders(t *testing.T) {
 	}, env)
 	require.NoError(t, err)
 
-	streamOnce(t, client, httpclient.ContextWithSessionID(t.Context(), "conversation-a"))
+	streamOnce(t, httpclient.ContextWithSessionID(t.Context(), "conversation-a"), client)
 
 	got := seen()
 	require.Len(t, got, 1)
 	assert.Empty(t, got[0], "session identifiers must not leak to unrelated providers")
+}
+
+func TestOpenCodeSessionHeaderNotSentThroughGateway(t *testing.T) {
+	t.Parallel()
+	server, seen := startOpenCodeCapture(t)
+	// server.URL is 127.0.0.1 which IsTrustedDockerURL considers trusted,
+	// so we must supply the Docker Desktop token.
+	env := environment.NewMapEnvProvider(map[string]string{
+		environment.DockerDesktopTokenEnv: "test-dd-token",
+	})
+	client, err := NewClient(t.Context(), &latest.ModelConfig{
+		Provider: "opencode-go",
+		Model:    "deepseek-v4-flash",
+		ProviderOpts: map[string]any{
+			"api_type": "openai_chatcompletions",
+		},
+	}, env, options.WithGateway(server.URL))
+	require.NoError(t, err)
+
+	streamOnce(t, httpclient.ContextWithSessionID(t.Context(), "conversation-a"), client)
+
+	got := seen()
+	require.Len(t, got, 1)
+	assert.Empty(t, got[0], "gateway requests carry the gateway's own session header instead")
 }

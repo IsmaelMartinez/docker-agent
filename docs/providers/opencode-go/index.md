@@ -134,7 +134,7 @@ For Anthropic-compatible models (MiniMax, Qwen), Docker Agent uses a custom prov
 
 ### Session Header
 
-OpenCode asks clients to send an `x-opencode-session` header carrying one stable ID per conversation, which it uses to optimise routing and prompt caching. Docker Agent sends it automatically on every request to `opencode.ai` (built-in aliases and custom providers alike), deriving an opaque value from the agent session so each conversation keeps the same ID, including in `serve api` / `serve chat` deployments that multiplex many conversations. To pin your own value, set `provider_opts.http_headers.x-opencode-session`.
+OpenCode asks clients to send an `x-opencode-session` header carrying one stable ID per conversation, which it uses to optimise routing and prompt caching. Docker Agent sends it on every direct request to `opencode.ai`, whether the model goes through the built-in alias or a custom provider on the OpenAI, Anthropic or Google client, deriving an opaque value from the agent session so each conversation keeps the same ID, including in `serve api` / `serve chat` deployments that multiplex many conversations. Requests routed through a models gateway carry the gateway's own session header instead, and the opt-in `transport: websocket` setting of the OpenAI client does not send it. On the OpenAI client you can pin your own value through `provider_opts.http_headers.x-opencode-session`; the Anthropic and Google clients do not read `http_headers`.
 
 ## Example: Code Assistant
 
