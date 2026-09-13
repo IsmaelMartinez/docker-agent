@@ -477,6 +477,7 @@ func WithInterruptMode(mode msgtypes.InterruptMode) PageOption {
 // sectionVisibility maps layout settings to the sidebar's visibility config.
 func sectionVisibility(settings msgtypes.LayoutSettings) sidebar.SectionVisibility {
 	return sidebar.SectionVisibility{
+		ShowPlans:       settings.ShowPlans,
 		HideSessionPath: settings.HideSessionPath,
 		HideUsage:       settings.HideUsage,
 		HideAgents:      settings.HideAgents,
@@ -560,6 +561,10 @@ func (p *chatPage) update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	// update's timers may be collected after it.
 	p.pendingTimers = nil
 	switch msg := msg.(type) {
+	case msgtypes.PlanSidebarDataMsg:
+		updated, cmd := p.sidebar.Update(msg)
+		p.sidebar = updated.(sidebar.Model)
+		return p, cmd
 	case tea.WindowSizeMsg:
 		cmd := p.SetSize(msg.Width, msg.Height)
 		return p, cmd

@@ -41,6 +41,7 @@ const (
 	rowAgents
 	rowActiveAgents
 	rowTools
+	rowPlans
 	rowTodos
 	rowSplitDiff
 	rowExpandThinking
@@ -260,6 +261,8 @@ func (d *settingsDialog) changeValue(delta int) tea.Cmd {
 			}
 		case rowTools:
 			d.current.Layout.HideTools = !d.current.Layout.HideTools
+		case rowPlans:
+			d.current.Layout.ShowPlans = !d.current.Layout.ShowPlans
 		case rowTodos:
 			d.current.Layout.HideTodos = !d.current.Layout.HideTodos
 		case rowSplitDiff:
@@ -400,6 +403,7 @@ func (d *settingsDialog) renderAppearanceTab(content *Content, inner int) {
 			AddContent(d.renderToggleRow(rowAgents, "Agents", !d.current.Layout.HideAgents)).
 			AddContent(d.renderNestedToggleRow(rowActiveAgents, "Active agents only", d.current.Layout.ActiveAgentsOnly, d.current.Layout.HideAgents)).
 			AddContent(d.renderToggleRow(rowTools, "Tools", !d.current.Layout.HideTools)).
+			AddContent(d.renderToggleRow(rowPlans, "Plans", d.current.Layout.ShowPlans)).
 			AddContent(d.renderToggleRow(rowTodos, "Todos", !d.current.Layout.HideTodos))
 	}
 	content.AddSpace().
@@ -516,6 +520,9 @@ func visibleSectionLabels(s messages.LayoutSettings) []string {
 	if !s.HideTodos {
 		labels = append(labels, "todos")
 	}
+	if s.ShowPlans {
+		labels = append(labels, "plans")
+	}
 	return labels
 }
 
@@ -556,9 +563,8 @@ func renderSidePreview(s messages.LayoutSettings, width int, onLeft bool) string
 	inner := width - 2
 	sideW := max(9, inner/3)
 	chatW := inner - sideW - 1
-	const contentRows = 5
-
 	labels := visibleSectionLabels(s)
+	contentRows := max(5, len(labels))
 	sectionStyle := styles.TabAccentStyle
 
 	var lines []string
