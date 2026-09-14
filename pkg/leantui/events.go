@@ -15,6 +15,9 @@ import (
 // updating the conversation, tool state, status footer, or busy state.
 func (m *model) handleEvent(ctx context.Context, ev any) {
 	switch e := ev.(type) {
+	case fileCompletionsLoaded:
+		m.screen.Autocomplete.SetFiles(e)
+		m.screen.Autocomplete.Sync(m.screen.Editor.Text())
 	case msgtypes.SendMsg:
 		if e.BypassQueue {
 			m.submit(ctx, e.Content, submitOptions{busyMode: busySubmitSteer})

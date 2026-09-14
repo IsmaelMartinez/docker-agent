@@ -14,6 +14,8 @@ import (
 	"github.com/docker/docker-agent/pkg/gitbranch"
 	"github.com/docker/docker-agent/pkg/history"
 	"github.com/docker/docker-agent/pkg/leantui/ui"
+	"github.com/docker/docker-agent/pkg/tui/components/completion"
+	"github.com/docker/docker-agent/pkg/tui/components/editor/completions"
 	"github.com/docker/docker-agent/pkg/tui/service"
 )
 
@@ -75,6 +77,17 @@ func Run(ctx context.Context, cfg Config) error {
 	resizes := make(chan [2]int, 4)
 	done := make(chan struct{})
 	defer close(done)
+
+	fileCompletion := completions.NewFileCompletionAt(loopCtx, cfg.WorkingDir)
+	if loader, ok := fileCompletion.(completions.AsyncLoader); ok {
+		go func() {
+			items := <-loader.LoadItemsAsync(loopCtx)
+			select {
+			case events <- fileCompletionsLoaded(items):
+			case <-done:
+			}
+		}()
+	}
 
 	go readKeys(term.Reader(), keys, done)
 	go func() {
@@ -154,6 +167,8 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	return nil
 }
+
+type fileCompletionsLoaded []completion.Item
 
 func readKeys(r io.Reader, keys chan<- ui.Key, done <-chan struct{}) {
 	p := &ui.InputParser{}
