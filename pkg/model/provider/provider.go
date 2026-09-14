@@ -1,24 +1,11 @@
-// Package provider builds and dispatches to LLM provider clients.
+// Package provider defines the provider contracts and builds providers from
+// explicit factory registries.
 //
-// The package is organised across several files:
-//
-//   - provider.go (this file): the public Provider interfaces and the entry
-//     points [New] and [NewWithModels] that callers use to construct a
-//     provider from a model config.
-//   - aliases.go: the built-in provider alias table (OpenAI-compatible
-//     gateways such as ollama, mistral, xai, ...) and the helpers that expose
-//     it to other packages without leaking the underlying map.
-//   - defaults.go: pure config-merging logic that fills in defaults from
-//     custom providers, built-in aliases, and model-specific rules
-//     (thinking budget, interleaved thinking, ...).
-//   - factory.go: shared dispatch from a resolved provider type to the
-//     concrete client constructor, plus the rule-based router.
-//
-// Optional SDK-backed providers live outside this package's default import
-// graph. YAML-loading applications that need Docker Agent's full provider set
-// should import pkg/model/provider/providers and pass its explicit registry;
-// embedders that build agents manually can import only the concrete provider
-// packages they use and pass their factories to [NewRegistry].
+// The package deliberately does not import concrete SDK-backed providers.
+// Applications that need Docker Agent's built-in provider set should import
+// pkg/model/provider/providers and use its NewDefaultRegistry. Embedders can
+// instead build a smaller registry with [NewRegistry]. [EmptyRegistry] is
+// available for components that support running without model providers.
 package provider
 
 import (
@@ -80,16 +67,18 @@ type RerankingProvider interface {
 	Rerank(ctx context.Context, query string, documents []types.Document, criteria string) ([]float64, error)
 }
 
-// New creates a new provider from a model config using the default registry.
-// The default registry only contains providers that the core package can expose
-// without optional SDK dependencies. YAML-loading applications that need all
-// docker-agent providers should use pkg/model/provider/providers.NewDefaultRegistry.
+// New creates a provider with an empty registry and therefore returns an
+// unknown-provider error for every concrete provider.
+//
+// Deprecated: construct a Registry explicitly and call Registry.New.
 func New(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider, opts ...options.Opt) (Provider, error) {
-	return DefaultRegistry().New(ctx, cfg, env, opts...)
+	return EmptyRegistry().New(ctx, cfg, env, opts...)
 }
 
-// NewWithModels creates a new provider from a model config with access to the full models map.
-// The models map is used to resolve model references in routing rules.
+// NewWithModels creates a provider with an empty registry and therefore
+// returns an unknown-provider error for every concrete provider.
+//
+// Deprecated: construct a Registry explicitly and call Registry.NewWithModels.
 func NewWithModels(ctx context.Context, cfg *latest.ModelConfig, models map[string]latest.ModelConfig, env environment.Provider, opts ...options.Opt) (Provider, error) {
-	return DefaultRegistry().NewWithModels(ctx, cfg, models, env, opts...)
+	return EmptyRegistry().NewWithModels(ctx, cfg, models, env, opts...)
 }

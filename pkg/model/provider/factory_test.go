@@ -34,6 +34,24 @@ func tagFactory(id string) providerFactory {
 	}
 }
 
+func TestEmptyRegistryCannotConstructProviders(t *testing.T) {
+	t.Parallel()
+
+	r := EmptyRegistry()
+	assert.Empty(t, r.Types())
+
+	_, err := r.New(t.Context(), &latest.ModelConfig{Provider: "openai", Model: "gpt-5"}, environment.NewDefaultProvider())
+	require.EqualError(t, err, `unknown provider type "openai" (register it with provider.NewRegistry or use providers.NewDefaultRegistry)`)
+}
+
+func TestNilRegistryReturnsConfigurationError(t *testing.T) {
+	t.Parallel()
+
+	var r *Registry
+	_, err := r.New(t.Context(), &latest.ModelConfig{Provider: "openai", Model: "gpt-5"}, environment.NewDefaultProvider())
+	require.EqualError(t, err, "provider registry is required")
+}
+
 // TestCreateDirectProvider_DispatchByType verifies that resolveProviderType's
 // output is mapped to the right factory entry for every supported value,
 // including the OpenAI api_type aliases.

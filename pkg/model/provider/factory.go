@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -74,7 +75,7 @@ func (r *Registry) resolveRoutedModel(ctx context.Context, modelSpec string, mod
 
 func (r *Registry) createDirectProvider(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider, opts ...options.Opt) (Provider, error) {
 	if r == nil {
-		r = DefaultRegistry()
+		return nil, errors.New("provider registry is required")
 	}
 	globalOptions := options.Apply(opts...)
 	enhancedCfg := applyProviderDefaults(cfg, globalOptions.Providers())
@@ -120,10 +121,19 @@ func (r *Registry) createDirectProvider(ctx context.Context, cfg *latest.ModelCo
 	return instrumentProvider(p), nil
 }
 
-var defaultFactories map[string]Factory
+// EmptyRegistry returns a registry with no provider factories. It is useful
+// for components that support running without models; it cannot construct a
+// concrete provider until factories are explicitly supplied to NewRegistry.
+func EmptyRegistry() *Registry {
+	return NewRegistry(nil)
+}
 
+// DefaultRegistry returns an empty registry because this package deliberately
+// does not import concrete provider implementations.
+//
+// Deprecated: use EmptyRegistry or construct a Registry explicitly.
 func DefaultRegistry() *Registry {
-	return NewRegistry(defaultFactories)
+	return EmptyRegistry()
 }
 
 func unknownProviderError(providerType string) error {

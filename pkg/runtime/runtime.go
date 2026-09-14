@@ -709,7 +709,7 @@ func NewLocalRuntime(ctx context.Context, agents *team.Team, opts ...Opt) (*Loca
 		fallback:                     newFallbackExecutor(),
 		now:                          time.Now,
 		telemetry:                    defaultTelemetry{},
-		providerRegistry:             provider.DefaultRegistry(),
+		providerRegistry:             provider.EmptyRegistry(),
 		maxOverflowCompactions:       defaultMaxOverflowCompactions,
 		toolListTimeout:              defaultToolListTimeout,
 		toolStartTimeout:             defaultToolStartTimeout,
