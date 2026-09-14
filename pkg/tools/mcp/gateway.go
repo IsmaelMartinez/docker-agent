@@ -112,13 +112,13 @@ func (t *GatewayToolset) prepare(ctx context.Context) error {
 	if !ok {
 		return errors.Join(errors.New("gateway toolset requires stdio MCP client"), t.cleanUp(ctx))
 	}
-	client.args = []string{
+	client.setArgs([]string{
 		"mcp", "gateway", "run",
 		"--servers", t.mcpServerName,
 		"--catalog", gateway.DockerCatalogURL,
 		"--secrets", secretsFile,
 		"--config", configFile,
-	}
+	})
 	return nil
 }
 
