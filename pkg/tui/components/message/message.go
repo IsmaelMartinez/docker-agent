@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/docker/docker-agent/pkg/tui/animation"
@@ -421,13 +420,6 @@ func (mv *messageModel) RenderedSegments(width int) (AssistantSegments, bool) {
 		mv.codeBlocks = append(mv.codeBlocks[:0], mv.segmentCodeBlocks...)
 	}
 	return AssistantSegments{Header: cache.headerLines, Stable: cache.stableLines, Tail: tailLines}, true
-}
-
-func styledAssistantLines(style lipgloss.Style, width int, content string) []string {
-	if content == "" {
-		return nil
-	}
-	return strings.Split(strings.TrimSuffix(style.Width(width).Render(content), "\n"), "\n")
 }
 
 // View renders the message view
