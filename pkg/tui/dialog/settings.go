@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -195,34 +196,49 @@ func (d *settingsDialog) moveSelection(delta int) {
 	}
 }
 
+var settingsKeys = struct {
+	Close, NextTab, PreviousTab, Up, Down, Home, End, Left, Right, Enter key.Binding
+}{
+	key.NewBinding(key.WithKeys("esc", "q")),
+	key.NewBinding(key.WithKeys("tab")),
+	key.NewBinding(key.WithKeys("shift+tab")),
+	key.NewBinding(key.WithKeys("up", "k", "ctrl+k")),
+	key.NewBinding(key.WithKeys("down", "j", "ctrl+j")),
+	key.NewBinding(key.WithKeys("home", "g")),
+	key.NewBinding(key.WithKeys("end", "G")),
+	key.NewBinding(key.WithKeys("left", "h")),
+	key.NewBinding(key.WithKeys("right", "l", "space")),
+	key.NewBinding(key.WithKeys("enter")),
+}
+
 func (d *settingsDialog) handleKey(msg tea.KeyPressMsg) tea.Cmd {
-	switch msg.String() {
-	case "esc", "q":
+	switch {
+	case key.Matches(msg, settingsKeys.Close):
 		return d.cancel()
-	case "tab":
+	case key.Matches(msg, settingsKeys.NextTab):
 		d.confirmYOLO = false
 		d.tab = (d.tab + 1) % tabCount
-	case "shift+tab":
+	case key.Matches(msg, settingsKeys.PreviousTab):
 		d.confirmYOLO = false
 		d.tab = (d.tab + tabCount - 1) % tabCount
-	case "up", "k", "ctrl+k":
+	case key.Matches(msg, settingsKeys.Up):
 		d.confirmYOLO = false
 		d.moveSelection(-1)
-	case "down", "j", "ctrl+j":
+	case key.Matches(msg, settingsKeys.Down):
 		d.confirmYOLO = false
 		d.moveSelection(1)
-	case "home", "g":
+	case key.Matches(msg, settingsKeys.Home):
 		d.selected[d.tab] = 0
-	case "end", "G":
+	case key.Matches(msg, settingsKeys.End):
 		d.selected[d.tab] = d.rowCount() - 1
 		if !d.selectable(d.tab, d.selected[d.tab]) {
 			d.moveSelection(-1)
 		}
-	case "left", "h":
+	case key.Matches(msg, settingsKeys.Left):
 		return d.changeValue(-1)
-	case "right", "l", "space":
+	case key.Matches(msg, settingsKeys.Right):
 		return d.changeValue(1)
-	case "enter":
+	case key.Matches(msg, settingsKeys.Enter):
 		if d.tab == tabAppearance && d.selected[d.tab] == rowTheme {
 			return core.CmdHandler(messages.OpenThemePickerMsg{})
 		}

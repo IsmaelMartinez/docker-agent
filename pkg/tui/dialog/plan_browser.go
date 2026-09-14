@@ -629,6 +629,13 @@ func (d *planBrowserDialog) Position() (row, col int) {
 
 // --- Status input dialog ---
 
+var planTextInputKeys = struct {
+	Escape, Enter key.Binding
+}{
+	key.NewBinding(key.WithKeys("esc")),
+	key.NewBinding(key.WithKeys("enter")),
+}
+
 // planStatusDialog is the small text-input dialog behind the `s` action. It
 // emits SetPlanStatusMsg guarded by the version that was displayed when the
 // action started.
@@ -677,10 +684,10 @@ func (d *planStatusDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		if cmd := HandleQuit(msg); cmd != nil {
 			return d, cmd
 		}
-		switch msg.String() {
-		case "esc":
+		switch {
+		case key.Matches(msg, planTextInputKeys.Escape):
 			return d, core.CmdHandler(CloseDialogMsg{})
-		case "enter":
+		case key.Matches(msg, planTextInputKeys.Enter):
 			status := strings.TrimSpace(d.input.Value())
 			if status == "" {
 				return d, notification.ErrorCmd("Status must not be empty.")
@@ -855,10 +862,10 @@ func (d *planNameDialog) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		if cmd := HandleQuit(msg); cmd != nil {
 			return d, cmd
 		}
-		switch msg.String() {
-		case "esc":
+		switch {
+		case key.Matches(msg, planTextInputKeys.Escape):
 			return d, core.CmdHandler(CloseDialogMsg{})
-		case "enter":
+		case key.Matches(msg, planTextInputKeys.Enter):
 			name := strings.TrimSpace(d.input.Value())
 			if name == "" {
 				return d, notification.ErrorCmd("Plan name must not be empty.")

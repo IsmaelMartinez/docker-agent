@@ -2404,17 +2404,22 @@ func (m *appModel) Bindings() []key.Binding {
 	return filtered
 }
 
+var (
+	transcriptionEnterKey  = key.NewBinding(key.WithKeys("enter"))
+	transcriptionEscapeKey = key.NewBinding(key.WithKeys("esc"))
+)
+
 // handleKeyPress handles all keyboard input with proper priority routing.
 func (m *appModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Check if we should stop transcription on Enter or Escape
 	if m.transcriber.IsRunning() {
-		switch msg.String() {
-		case "enter":
+		switch {
+		case key.Matches(msg, transcriptionEnterKey):
 			model, cmd := m.handleStopSpeak()
 			sendCmd := m.activeTab.editor.SendContent()
 			return model, tea.Batch(cmd, sendCmd)
 
-		case "esc":
+		case key.Matches(msg, transcriptionEscapeKey):
 			return m.handleStopSpeak()
 		}
 	}
