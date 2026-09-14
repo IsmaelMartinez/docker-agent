@@ -245,7 +245,7 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 
 	var loadOpts loadOptions
 	loadOpts.toolsetRegistry = NewDefaultToolsetRegistry()
-	loadOpts.providerRegistry = provider.DefaultRegistry()
+	loadOpts.providerRegistry = provider.EmptyRegistry()
 	loadOpts.newExpander = newEnvExpander
 
 	for _, o := range opts {
