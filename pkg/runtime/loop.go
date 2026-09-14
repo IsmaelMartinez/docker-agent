@@ -1643,7 +1643,7 @@ func (r *LocalRuntime) configureToolsetHandlers(a *agent.Agent, events EventSink
 		// channel; a blocking send after the channel is closed would
 		// crash, and a blocking send when the consumer has gone away
 		// would deadlock.
-		if ragTool, ok := tools.As[ragtypes.EventForwarder](toolset); ok {
+		for _, ragTool := range tools.FindAll[ragtypes.EventForwarder](toolset) {
 			ragTool.SetEventCallback(ragEventForwarder(ragTool.Name(), r, nonBlocking(events).Emit))
 		}
 	}
@@ -1692,17 +1692,15 @@ func (r *LocalRuntime) subscribePlanChanges(sess *session.Session, events EventS
 	seen := make(map[notifierIdentity]struct{})
 	var unsubs []func()
 	for _, ts := range toolsets {
-		notifier, ok := tools.As[plan.ChangeNotifier](ts)
-		if !ok {
-			continue
-		}
-		if key, identifiable := notifierDedupKey(notifier); identifiable {
-			if _, dup := seen[key]; dup {
-				continue
+		for _, notifier := range tools.FindAll[plan.ChangeNotifier](ts) {
+			if key, identifiable := notifierDedupKey(notifier); identifiable {
+				if _, dup := seen[key]; dup {
+					continue
+				}
+				seen[key] = struct{}{}
 			}
-			seen[key] = struct{}{}
+			unsubs = append(unsubs, notifier.SubscribeChanges(forward))
 		}
-		unsubs = append(unsubs, notifier.SubscribeChanges(forward))
 	}
 	return func() {
 		for _, unsub := range unsubs {

@@ -1292,16 +1292,14 @@ func (r *LocalRuntime) CurrentMCPPrompts(ctx context.Context) map[string]tools.P
 
 	// Iterate through all toolsets of the current agent
 	for _, toolset := range currentAgent.ToolSets() {
-		if mcpToolset, ok := tools.As[mcpPromptToolset](toolset); ok {
+		mcpToolsets := tools.FindAll[mcpPromptToolset](toolset)
+		if len(mcpToolsets) == 0 {
+			slog.DebugContext(ctx, "Toolset contains no MCP prompt provider", "type", fmt.Sprintf("%T", toolset))
+			continue
+		}
+		for _, mcpToolset := range mcpToolsets {
 			slog.DebugContext(ctx, "Found MCP toolset", "toolset", mcpToolset)
-			// Discover prompts from this MCP toolset
-			mcpPrompts := r.discoverMCPPrompts(ctx, mcpToolset)
-
-			// Merge prompts into the result map
-			// If there are name conflicts, the later toolset's prompt will override
-			maps.Copy(prompts, mcpPrompts)
-		} else {
-			slog.DebugContext(ctx, "Toolset is not an MCP toolset", "type", fmt.Sprintf("%T", toolset))
+			maps.Copy(prompts, r.discoverMCPPrompts(ctx, mcpToolset))
 		}
 	}
 
@@ -1368,7 +1366,7 @@ func agentSkillsToolset(a *agent.Agent) *skills.ToolSet {
 		return nil
 	}
 	for _, ts := range a.ToolSets() {
-		if st, ok := tools.As[*skills.ToolSet](ts); ok {
+		if st, ok := tools.Find[*skills.ToolSet](ts); ok {
 			return st
 		}
 	}
@@ -1383,37 +1381,34 @@ func (r *LocalRuntime) ExecuteMCPPrompt(ctx context.Context, promptName string, 
 	}
 
 	for _, toolset := range currentAgent.ToolSets() {
-		mcpToolset, ok := tools.As[mcpPromptToolset](toolset)
-		if !ok {
-			continue
-		}
-
-		result, err := mcpToolset.GetPrompt(ctx, promptName, arguments)
-		if err != nil {
-			// If error is "prompt not found", continue to next toolset
-			if err.Error() == "prompt not found" {
-				continue
+		for _, mcpToolset := range tools.FindAll[mcpPromptToolset](toolset) {
+			result, err := mcpToolset.GetPrompt(ctx, promptName, arguments)
+			if err != nil {
+				// If error is "prompt not found", continue to next toolset
+				if err.Error() == "prompt not found" {
+					continue
+				}
+				return "", fmt.Errorf("error executing prompt '%s': %w", promptName, err)
 			}
-			return "", fmt.Errorf("error executing prompt '%s': %w", promptName, err)
-		}
 
-		// Convert the MCP result to a string format
-		if len(result.Messages) == 0 {
-			return "No content returned from MCP prompt", nil
-		}
+			// Convert the MCP result to a string format
+			if len(result.Messages) == 0 {
+				return "No content returned from MCP prompt", nil
+			}
 
-		var content strings.Builder
-		for i, message := range result.Messages {
-			if i > 0 {
-				content.WriteString("\n\n")
+			var content strings.Builder
+			for i, message := range result.Messages {
+				if i > 0 {
+					content.WriteString("\n\n")
+				}
+				if textContent, ok := message.Content.(*mcp.TextContent); ok {
+					content.WriteString(textContent.Text)
+				} else {
+					fmt.Fprintf(&content, "[Non-text content: %T]", message.Content)
+				}
 			}
-			if textContent, ok := message.Content.(*mcp.TextContent); ok {
-				content.WriteString(textContent.Text)
-			} else {
-				fmt.Fprintf(&content, "[Non-text content: %T]", message.Content)
-			}
+			return content.String(), nil
 		}
-		return content.String(), nil
 	}
 
 	return "", fmt.Errorf("MCP prompt '%s' not found in any active toolset", promptName)
@@ -1584,7 +1579,7 @@ func (r *LocalRuntime) OnToolsChanged(handler func(Event)) {
 			continue
 		}
 		for _, ts := range a.ToolSets() {
-			if n, ok := tools.As[tools.ChangeNotifier](ts); ok {
+			for _, n := range tools.FindAll[tools.ChangeNotifier](ts) {
 				n.SetToolsChangedHandler(r.emitToolsChanged)
 			}
 		}

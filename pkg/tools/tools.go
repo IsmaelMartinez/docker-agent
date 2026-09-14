@@ -145,14 +145,18 @@ func ResultJSON(v any) *ToolCallResult {
 type ToolType string
 
 type Tool struct {
-	Name                    string          `json:"name"`
-	Category                string          `json:"category"`
-	Description             string          `json:"description,omitempty"`
-	Parameters              any             `json:"parameters"`
-	Annotations             ToolAnnotations `json:"annotations"`
-	OutputSchema            any             `json:"outputSchema"`
-	Handler                 ToolHandler     `json:"-"`
-	AddDescriptionParameter bool            `json:"-"`
+	Name         string          `json:"name"`
+	Category     string          `json:"category"`
+	Description  string          `json:"description,omitempty"`
+	Parameters   any             `json:"parameters"`
+	Annotations  ToolAnnotations `json:"annotations"`
+	OutputSchema any             `json:"outputSchema"`
+	Handler      ToolHandler     `json:"-"`
+	// RuntimeHandler identifies the host-owned handler that executes this tool.
+	// Empty means Handler owns execution, regardless of name collisions with
+	// runtime-managed tools.
+	RuntimeHandler          string `json:"-"`
+	AddDescriptionParameter bool   `json:"-"`
 	// Deferred keeps tools added after the first model call out of cached prompt prefixes.
 	Deferred             bool   `json:"-"`
 	DeferredAtToolCallID string `json:"-"`

@@ -586,8 +586,9 @@ Use background agent tasks to dispatch work to sub-agents concurrently.
 func backgroundAgentTools() []tools.Tool {
 	return []tools.Tool{
 		{
-			Name:     ToolNameRunBackgroundAgent,
-			Category: "transfer",
+			Name:           ToolNameRunBackgroundAgent,
+			RuntimeHandler: ToolNameRunBackgroundAgent,
+			Category:       "transfer",
 			Description: `Start a sub-agent task in the background and return immediately with a task ID.
 Use this to dispatch work to multiple sub-agents concurrently. Native sub-agents inherit the current
 session's safety policy and permissions; calls requiring confirmation are denied because background
@@ -597,29 +598,32 @@ view_background_agent and collect results once the task is complete.`,
 			Annotations: tools.ToolAnnotations{Title: "Run Background Agent"},
 		},
 		{
-			Name:        ToolNameListBackgroundAgents,
-			Category:    "transfer",
-			Description: `List all background agent tasks with their status and runtime.`,
+			Name:           ToolNameListBackgroundAgents,
+			RuntimeHandler: ToolNameListBackgroundAgents,
+			Category:       "transfer",
+			Description:    `List all background agent tasks with their status and runtime.`,
 			Annotations: tools.ToolAnnotations{
 				Title:        "List Background Agents",
 				ReadOnlyHint: true,
 			},
 		},
 		{
-			Name:        ToolNameViewBackgroundAgent,
-			Category:    "transfer",
-			Description: `View the output and status of a specific background agent task by task ID. Returns live buffered output if still running, or the final result if complete.`,
-			Parameters:  tools.MustSchemaFor[ViewBackgroundAgentArgs](),
+			Name:           ToolNameViewBackgroundAgent,
+			RuntimeHandler: ToolNameViewBackgroundAgent,
+			Category:       "transfer",
+			Description:    `View the output and status of a specific background agent task by task ID. Returns live buffered output if still running, or the final result if complete.`,
+			Parameters:     tools.MustSchemaFor[ViewBackgroundAgentArgs](),
 			Annotations: tools.ToolAnnotations{
 				Title:        "View Background Agent",
 				ReadOnlyHint: true,
 			},
 		},
 		{
-			Name:        ToolNameStopBackgroundAgent,
-			Category:    "transfer",
-			Description: `Stop a running background agent task by task ID.`,
-			Parameters:  tools.MustSchemaFor[StopBackgroundAgentArgs](),
+			Name:           ToolNameStopBackgroundAgent,
+			RuntimeHandler: ToolNameStopBackgroundAgent,
+			Category:       "transfer",
+			Description:    `Stop a running background agent task by task ID.`,
+			Parameters:     tools.MustSchemaFor[StopBackgroundAgentArgs](),
 			Annotations: tools.ToolAnnotations{
 				Title: "Stop Background Agent",
 			},

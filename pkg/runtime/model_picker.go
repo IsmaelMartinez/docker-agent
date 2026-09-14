@@ -22,7 +22,7 @@ func (r *LocalRuntime) findModelPickerTool() *modelpicker.ToolSet {
 		return nil
 	}
 	for _, ts := range a.ToolSets() {
-		if mpt, ok := tools.As[*modelpicker.ToolSet](ts); ok {
+		if mpt, ok := tools.Find[*modelpicker.ToolSet](ts); ok {
 			return mpt
 		}
 	}
