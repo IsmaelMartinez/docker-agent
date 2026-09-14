@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
+	"github.com/docker/docker-agent/pkg/model/provider/contracts"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 	"github.com/docker/docker-agent/pkg/model/provider/rulebased"
 )
@@ -47,9 +48,7 @@ func (r *Registry) NewWithModels(ctx context.Context, cfg *latest.ModelConfig, m
 		if err != nil {
 			return nil, err
 		}
-		if setter, ok := p.(interface{ SetProviderRegistry(registry any) }); ok {
-			setter.SetProviderRegistry(r)
-		}
+		r.attachRebuilder(p, models, env)
 		return p, nil
 	}
 	return r.createDirectProvider(ctx, cfg, env, opts...)
@@ -110,15 +109,25 @@ func (r *Registry) createDirectProvider(ctx context.Context, cfg *latest.ModelCo
 	if err != nil {
 		return nil, err
 	}
-	if setter, ok := p.(interface{ SetProviderRegistry(registry any) }); ok {
-		setter.SetProviderRegistry(r)
-	}
+	r.attachRebuilder(p, nil, env)
 	// Wrap leaf providers with the GenAI semconv tracer so every chat
 	// completion emits a `chat {model}` CLIENT span and the standard
 	// gen_ai.client.* metrics. The rule-based router constructed by
 	// createRuleBasedRouter is left bare — its routed targets go through
 	// resolveRoutedModel → createDirectProvider and end up wrapped here.
 	return instrumentProvider(p), nil
+}
+
+func (r *Registry) attachRebuilder(p Provider, models map[string]latest.ModelConfig, env environment.Provider) {
+	setter, ok := p.(interface {
+		SetProviderRebuilder(rebuild contracts.RebuildProviderFunc)
+	})
+	if !ok {
+		return
+	}
+	setter.SetProviderRebuilder(func(ctx context.Context, cfg *latest.ModelConfig, opts ...options.Opt) (contracts.Provider, error) {
+		return r.NewWithModels(ctx, cfg, models, env, opts...)
+	})
 }
 
 // EmptyRegistry returns a registry with no provider factories. It is useful
