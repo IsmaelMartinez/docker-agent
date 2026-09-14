@@ -642,48 +642,63 @@ func (m *appModel) handleOpenModelPicker() (tea.Model, tea.Cmd) {
 	})
 }
 
+type modelPickerRefreshResult struct {
+	tabID       string
+	origin      chat.Page
+	application *app.App
+	result      messages.ModelPickerRefreshedMsg
+}
+
+type modelPickerRefreshEffect struct {
+	tabID       string
+	origin      chat.Page
+	application *app.App
+	inner       tea.Msg
+}
+
 func (m *appModel) handleRefreshModelPicker(query string) (tea.Model, tea.Cmd) {
 	if !m.application.SupportsModelSwitching() {
 		return m, notification.InfoCmd("Model switching is not supported with remote runtimes")
 	}
 
-	ctx := m.ctx()
+	ctx, application, origin := m.ctx(), m.application, m.activeTab.chatPage
+	tabID := m.supervisor.ActiveID()
 	return m, tea.Batch(
 		notification.InfoCmd("Refreshing models…"),
 		func() tea.Msg {
-			err := m.application.RefreshModelsCatalog(ctx)
-			catalogRefreshed := err == nil
+			err := application.RefreshModelsCatalog(ctx)
+			result := messages.ModelPickerRefreshedMsg{Query: query, CatalogRefreshed: err == nil}
 			if errors.Is(err, runtime.ErrUnsupported) {
 				err = nil
 			}
-			if err != nil {
-				return messages.ModelPickerRefreshedMsg{Query: query, Err: err}
+			result.Err = err
+			if err == nil {
+				result.Models = application.AvailableModels(ctx)
 			}
-			return messages.ModelPickerRefreshedMsg{
-				Models:           m.application.AvailableModels(ctx),
-				Query:            query,
-				CatalogRefreshed: catalogRefreshed,
-			}
+			return modelPickerRefreshResult{tabID: tabID, origin: origin, application: application, result: result}
 		},
 	)
 }
 
-func (m *appModel) handleModelPickerRefreshed(msg messages.ModelPickerRefreshedMsg) (tea.Model, tea.Cmd) {
-	if msg.Err != nil {
-		return m, notification.ErrorCmd(fmt.Sprintf("Failed to refresh models catalog: %v", msg.Err))
+func (m *appModel) handleModelPickerRefreshed(msg modelPickerRefreshResult) (tea.Model, tea.Cmd) {
+	scoped := func(inner tea.Msg) tea.Cmd {
+		return core.CmdHandler(modelPickerRefreshEffect{tabID: msg.tabID, origin: msg.origin, application: msg.application, inner: inner})
 	}
-	if len(msg.Models) == 0 {
-		return m, notification.InfoCmd("No models available for selection")
+	result := msg.result
+	if result.Err != nil {
+		return m, scoped(notification.ShowMsg{Text: fmt.Sprintf("Failed to refresh models catalog: %v", result.Err), Type: notification.TypeError})
 	}
-
-	modelDialog := dialog.NewModelPickerDialogWithQuery(msg.Models, msg.Query)
+	if len(result.Models) == 0 {
+		return m, scoped(notification.ShowMsg{Text: "No models available for selection", Type: notification.TypeInfo})
+	}
+	modelDialog := dialog.NewModelPickerDialogWithQuery(result.Models, result.Query)
 	toast := "Model list reloaded"
-	if msg.CatalogRefreshed {
+	if result.CatalogRefreshed {
 		toast = "Models refreshed"
 	}
 	return m, tea.Batch(
-		notification.SuccessCmd(toast),
-		core.CmdHandler(dialog.OpenDialogMsg{Model: modelDialog}),
+		scoped(notification.ShowMsg{Text: toast, Type: notification.TypeSuccess}),
+		scoped(dialog.OpenDialogMsg{Model: modelDialog}),
 	)
 }
 
