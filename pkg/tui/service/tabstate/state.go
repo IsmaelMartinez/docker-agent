@@ -14,14 +14,34 @@ import (
 // Its methods are safe to call from either the subscription or the UI goroutine.
 type State struct {
 	mu             sync.Mutex
-	tabID          string
+	sessionID      string
 	title          string
 	running        bool
 	needsAttention bool
 	pending        []tea.Msg
 }
 
-func New(tabID, title string) *State { return &State{tabID: tabID, title: title} }
+func New(sessionID, title string) *State { return &State{sessionID: sessionID, title: title} }
+
+// SessionID is the live conversation, not the tab's immutable routing key.
+func (s *State) SessionID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessionID
+}
+
+// ReplaceSession retires attention belonging to the previous conversation.
+func (s *State) ReplaceSession(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sessionID == sessionID {
+		return
+	}
+	s.sessionID = sessionID
+	s.running = false
+	s.needsAttention = false
+	s.pending = nil
+}
 
 // Snapshot returns one consistent set of tab-bar properties.
 func (s *State) Snapshot() (title string, running, needsAttention bool) {
@@ -67,13 +87,13 @@ func (s *State) Apply(msg tea.Msg, active bool) (changed, bell bool) {
 	defer s.mu.Unlock()
 	switch ev := msg.(type) {
 	case *runtime.StreamStartedEvent:
-		if !isTopLevelStream(s.tabID, ev.SessionID) {
+		if !isTopLevelStream(s.sessionID, ev.SessionID) {
 			return false, false
 		}
 		s.running = true
 		s.retainDetachedElicitations()
 	case *runtime.StreamStoppedEvent:
-		if !isTopLevelStream(s.tabID, ev.SessionID) {
+		if !isTopLevelStream(s.sessionID, ev.SessionID) {
 			return false, false
 		}
 		s.running = false
@@ -97,7 +117,7 @@ func (s *State) Apply(msg tea.Msg, active bool) (changed, bell bool) {
 func (s *State) retainDetachedElicitations() {
 	s.pending = slices.DeleteFunc(s.pending, func(msg tea.Msg) bool {
 		ev, ok := msg.(*runtime.ElicitationRequestEvent)
-		return !ok || isTopLevelStream(s.tabID, ev.SessionID)
+		return !ok || isTopLevelStream(s.sessionID, ev.SessionID)
 	})
 	s.needsAttention = len(s.pending) > 0
 }

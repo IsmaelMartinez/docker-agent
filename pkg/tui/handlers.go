@@ -89,6 +89,7 @@ func (m *appModel) handleBranchFromEdit(msg messages.BranchFromEditMsg) (tea.Mod
 	m.persistActiveTab(newSess.ID)
 
 	// Replace the session in the app and rebuild all per-session components.
+	m.bindTabSession(activeID, newSess.ID)
 	m.application.ReplaceSession(ctx, newSess)
 	m.initSessionComponents(activeID, m.application, newSess)
 	m.dialogMgr = dialog.New()

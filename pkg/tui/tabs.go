@@ -191,3 +191,12 @@ func (m *appModel) findTabByPersistedID(persistedID string) string {
 	}
 	return ""
 }
+
+// bindTabSession keeps subscription status aligned with the conversation loaded in the tab.
+func (m *appModel) bindTabSession(tabID, sessionID string) {
+	tab := m.ensureTab(tabID)
+	if tab.state != nil && tab.state.SessionID() != sessionID {
+		tab.state.ReplaceSession(sessionID)
+		tab.stashedDialog = nil
+	}
+}

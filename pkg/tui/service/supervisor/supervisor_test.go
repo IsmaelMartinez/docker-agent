@@ -123,3 +123,19 @@ func TestRuntimeEventUpdatesOwningTab(t *testing.T) {
 	assert.Equal(t, 1, activeIdx)
 	assert.False(t, tabs[1].NeedsAttention)
 }
+
+func TestRestoredConversationKeepsTabRoutingIdentity(t *testing.T) {
+	t.Parallel()
+	s := newTestSupervisor([]string{"tab"}, "tab")
+	s.GetRunner("tab").State.ReplaceSession("restored")
+	s.handleRuntimeEvent("tab", &runtime.StreamStartedEvent{SessionID: "restored"})
+	tabs, _ := s.GetTabs()
+	assert.Equal(t, "tab", tabs[0].SessionID)
+	assert.True(t, tabs[0].IsRunning)
+	s.handleRuntimeEvent("tab", &runtime.StreamStoppedEvent{SessionID: "tab"})
+	tabs, _ = s.GetTabs()
+	assert.True(t, tabs[0].IsRunning)
+	s.handleRuntimeEvent("tab", &runtime.StreamStoppedEvent{SessionID: "restored"})
+	tabs, _ = s.GetTabs()
+	assert.False(t, tabs[0].IsRunning)
+}

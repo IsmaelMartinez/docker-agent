@@ -242,6 +242,7 @@ func TestSwitchTabRestoresSavedSession(t *testing.T) {
 	assert.Same(t, tab, m.activeTab)
 	assert.Equal(t, id, m.supervisor.ActiveID())
 	assert.Equal(t, saved.ID, m.application.Session().ID)
+	assert.Equal(t, saved.ID, tab.state.SessionID())
 	assert.Equal(t, saved.ID, m.persistedSessionID(id))
 	assert.Nil(t, tab.pendingRestore)
 	assert.Nil(t, tab.pendingSidebarCollapsed)
@@ -289,6 +290,7 @@ func TestInitRestoresPendingTab(t *testing.T) {
 			assert.Nil(t, tab.pendingRestore)
 			assert.Nil(t, tab.pendingSidebarCollapsed)
 			assert.Equal(t, saved.ID, m.application.Session().ID)
+			assert.Equal(t, saved.ID, tab.state.SessionID())
 			assert.Contains(t, m.activeTab.chatPage.View(), "startup conversation")
 		})
 	}
@@ -373,4 +375,58 @@ func TestTabOwnsRuntimeAttentionState(t *testing.T) {
 	assert.Nil(t, tab.state.Consume(), "activation drains the owning tab's queue")
 	tabs, _ = m.supervisor.GetTabs()
 	assert.False(t, tabs[0].NeedsAttention)
+}
+
+func TestRestoredTabStreamUsesConversationIdentity(t *testing.T) {
+	t.Parallel()
+	m := newTabLifecycleModel(t)
+	tabID := m.supervisor.ActiveID()
+	saved := session.New(session.WithWorkingDir("/initial"))
+	saved.AddMessage(session.UserMessage("saved conversation"))
+	_, _ = m.replaceActiveSession(t.Context(), saved)
+	tab := m.activeTab
+	require.NotEqual(t, tabID, saved.ID)
+	tab.state.Apply(&runtime.StreamStartedEvent{SessionID: saved.ID}, true)
+	_, running, _ := tab.state.Snapshot()
+	assert.True(t, running, "restored conversation is the root stream, not a child")
+	own := &runtime.ElicitationRequestEvent{SessionID: saved.ID}
+	detached := &runtime.ElicitationRequestEvent{SessionID: "detached"}
+	tab.state.Apply(own, false)
+	tab.state.Apply(detached, false)
+	tab.state.Apply(&runtime.StreamStoppedEvent{SessionID: saved.ID}, false)
+	_, running, attention := tab.state.Snapshot()
+	assert.False(t, running)
+	assert.True(t, attention)
+	assert.Same(t, detached, tab.state.Consume())
+	assert.Nil(t, tab.state.Consume())
+	assert.Equal(t, tabID, m.supervisor.ActiveID())
+}
+
+func TestClearSessionDiscardsPreviousAttention(t *testing.T) {
+	t.Parallel()
+	m := newTabLifecycleModel(t)
+	id := m.supervisor.ActiveID()
+	tab := m.activeTab
+	oldID := m.application.Session().ID
+	event := &runtime.ElicitationRequestEvent{SessionID: "old-detached-job"}
+	tab.state.Apply(event, false)
+	tab.stashedDialog = &stashedDialog{dialog: &stubDialog{}, event: event}
+
+	_, _ = m.handleClearSession()
+
+	assert.Same(t, tab, m.activeTab)
+	assert.Nil(t, tab.stashedDialog)
+	assert.Nil(t, tab.state.Consume())
+	_, running, attention := tab.state.Snapshot()
+	assert.False(t, running)
+	assert.False(t, attention)
+	newID := m.application.Session().ID
+	require.NotEqual(t, oldID, newID)
+	tab.state.Apply(&runtime.StreamStartedEvent{SessionID: newID}, true)
+	_, running, _ = tab.state.Snapshot()
+	assert.True(t, running)
+	tab.state.Apply(&runtime.StreamStoppedEvent{SessionID: oldID}, true)
+	_, running, _ = tab.state.Snapshot()
+	assert.True(t, running, "late stop from previous conversation is not the new root")
+	assert.Equal(t, id, m.supervisor.ActiveID())
 }

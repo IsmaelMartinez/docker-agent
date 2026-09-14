@@ -132,3 +132,22 @@ func TestTitleAndUnrelatedEvents(t *testing.T) {
 	assert.False(t, changed)
 	assert.False(t, bell)
 }
+
+func TestReplaceSessionRetainsSameConversation(t *testing.T) {
+	t.Parallel()
+	state := New("conversation", "title")
+	event := &runtime.ElicitationRequestEvent{SessionID: "child"}
+	state.Apply(&runtime.StreamStartedEvent{SessionID: "conversation"}, false)
+	state.Apply(event, false)
+	state.ReplaceSession("conversation")
+	title, running, attention := state.Snapshot()
+	assert.Equal(t, "title", title)
+	assert.True(t, running)
+	assert.True(t, attention)
+	assert.Same(t, event, state.Consume())
+	state.ReplaceSession("replacement")
+	assert.Equal(t, "replacement", state.SessionID())
+	_, running, attention = state.Snapshot()
+	assert.False(t, running)
+	assert.False(t, attention)
+}

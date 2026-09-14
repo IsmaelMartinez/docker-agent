@@ -1687,6 +1687,7 @@ func (m *appModel) handleLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 	model, switchCmd := m.handleSwitchTab(newSessionID)
 
 	// Replace the blank session with the loaded one and rebuild all components.
+	m.bindTabSession(newSessionID, sess.ID)
 	m.application.ReplaceSession(ctx, sess)
 	m.initSessionComponents(newSessionID, m.application, sess)
 
@@ -1707,6 +1708,7 @@ func (m *appModel) handleLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 // a fresh runtime is spawned via the supervisor so that tools operate in the correct directory.
 func (m *appModel) replaceActiveSession(ctx context.Context, sess *session.Session) (tea.Model, tea.Cmd) {
 	activeID := m.supervisor.ActiveID()
+	m.bindTabSession(activeID, sess.ID)
 
 	slog.DebugContext(ctx, "Replacing empty session in-place", "tab_id", activeID, "loaded_session", sess.ID)
 
@@ -1760,6 +1762,7 @@ func (m *appModel) handleClearSession() (tea.Model, tea.Cmd) {
 	// Create a fresh session in the same app, preserving the working dir.
 	m.application.NewSession()
 	newSess := m.application.Session()
+	m.bindTabSession(activeID, newSess.ID)
 
 	// Rebuild all per-session UI components.
 	m.initSessionComponents(activeID, m.application, newSess)
