@@ -1044,7 +1044,7 @@ func (p *chatPage) handleSendMsg(msg msgtypes.SendMsg) (layout.Model, tea.Cmd) {
 	// Alt+Enter explicitly requests a separate end-of-turn follow-up. When the
 	// agent is idle there is no active turn to follow, so process it normally.
 	if msg.FollowUp && p.working && p.app != nil {
-		cmd := p.followUpMessage(msg)
+		cmd := p.tabLocal(p.followUpMessage(msg))
 		return p, cmd
 	}
 
@@ -1059,7 +1059,7 @@ func (p *chatPage) handleSendMsg(msg msgtypes.SendMsg) (layout.Model, tea.Cmd) {
 		return p, cmd
 	}
 
-	cmd := p.steerMessage(msg)
+	cmd := p.tabLocal(p.steerMessage(msg))
 	return p, cmd
 }
 

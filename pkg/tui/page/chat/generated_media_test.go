@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/components/messages"
+	msgtypes "github.com/docker/docker-agent/pkg/tui/messages"
 	"github.com/docker/docker-agent/pkg/tui/service"
 	"github.com/docker/docker-agent/pkg/tui/types"
 )
@@ -648,4 +649,27 @@ func TestMessageAddedReturnsResolutionOnlyAsLocalWork(t *testing.T) {
 	_, _ = p.UpdateEffects(resolveMedia(t, effects.Local))
 	assert.Equal(t, 1, rt.resolveCalls())
 	require.Len(t, rec.mediaUpdates, 1)
+}
+
+func TestLocalMediaResultCannotReplaceReloadedPlaceholder(t *testing.T) {
+	t.Parallel()
+	rt := &resolverTestRuntime{results: map[string]resolverResult{
+		"cat.png": {data: testPNGBytes(t), path: "/workspace/cat.png"},
+	}}
+	old, _ := newGeneratedMediaTestPage(t, rt)
+	old.SetRoutingID("same-tab")
+	event := assistantMessageAdded("owner", workspaceImagePart("cat.png", "cat.png", "owner"))
+	_, effects := old.UpdateEffects(event)
+	require.NotNil(t, effects.Local)
+	result := effects.Local().(msgtypes.RoutedMsg)
+	Cleanup(old)
+
+	replacement, rec := newGeneratedMediaTestPage(t, rt)
+	replacement.SetRoutingID("same-tab")
+	t.Cleanup(func() { Cleanup(replacement) })
+	_, _ = replacement.UpdateEffects(event)
+	_, _ = replacement.UpdateEffects(result.Inner)
+	assert.Contains(t, replacement.View(), "unavailable", "old IDs must not replace the new placeholder")
+	require.Len(t, rec.mediaCalls, 1)
+	assert.NotEqual(t, result.Inner.(generatedMediaResolvedMsg).media[0].ID, rec.mediaCalls[0][0].ID)
 }

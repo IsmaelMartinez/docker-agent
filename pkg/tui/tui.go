@@ -870,6 +870,17 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.RoutedMsg:
 		return m.handleRoutedMsg(msg)
 
+	case chat.GlobalMsg:
+		tab := m.tabs[msg.TabID]
+		if tab == nil || tab.chatPage != msg.Origin {
+			return m, nil
+		}
+		runner := m.supervisor.GetRunner(msg.TabID)
+		if runner == nil || runner.App != msg.Application {
+			return m, nil
+		}
+		return m.Update(msg.Inner)
+
 	case animation.TickMsg:
 		accepted, ok := m.ar.Accept(msg)
 		if !ok {

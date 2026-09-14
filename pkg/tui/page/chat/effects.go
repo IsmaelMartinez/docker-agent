@@ -1,6 +1,10 @@
 package chat
 
-import tea "charm.land/bubbletea/v2"
+import (
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/docker/docker-agent/pkg/app"
+)
 
 // Effects separates page work from commands that require the visible UI.
 // Commands keep their native Bubble Tea composition; never wrap an opaque
@@ -30,5 +34,23 @@ func (p *chatPage) tabLocal(cmd tea.Cmd) tea.Cmd {
 		return cmd
 	}
 	p.effects.Local = tea.Batch(p.effects.Local, cmd)
+	return nil
+}
+
+// GlobalMsg is an application effect owned by a page lifetime. The host checks
+// Origin before applying Inner, but does not require the tab to be visible.
+// Inner must be an application message, not a Bubble Tea control message.
+type GlobalMsg struct {
+	TabID       string
+	Origin      Page
+	Application *app.App
+	Inner       tea.Msg
+}
+
+func (p *chatPage) global(cmd tea.Cmd) tea.Cmd {
+	if p.effects == nil {
+		return cmd
+	}
+	p.effects.Global = tea.Batch(p.effects.Global, cmd)
 	return nil
 }

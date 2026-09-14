@@ -155,3 +155,38 @@ func TestAsyncInputResultAfterTabLifecycleChange(t *testing.T) {
 		})
 	}
 }
+
+func TestHiddenTabDispatchesAsyncSubmission(t *testing.T) {
+	t.Parallel()
+	for _, followUp := range []bool{false, true} {
+		t.Run(map[bool]string{false: "steer", true: "follow-up"}[followUp], func(t *testing.T) {
+			t.Parallel()
+			m := newTabLifecycleModel(t)
+			rt := &asyncQueueRuntime{started: make(chan struct{}), release: make(chan struct{}), runs: make(chan string, 1)}
+			sess := session.New(session.WithWorkingDir("/initial"))
+			a := app.New(t.Context(), rt, sess)
+			id := m.supervisor.ActiveID()
+			m.supervisor.ReplaceRunnerApp(t.Context(), id, a, "/initial", nil)
+			m.application = a
+			m.bindTabSession(id, sess.ID)
+			m.initSessionComponents(id, a, sess)
+			origin := m.activeTab
+			_, _ = origin.chatPage.Update(&runtime.StreamStartedEvent{SessionID: sess.ID})
+			_, _ = m.handleSpawnSession("/other")
+
+			_, cmd := m.Update(messages.RoutedMsg{SessionID: id, Inner: messages.SendMsg{Content: "hidden input", FollowUp: followUp}})
+			require.NotNil(t, cmd, "submission is local work, not a visible UI effect")
+			close(rt.release)
+			result := cmd()
+			select {
+			case <-rt.started:
+			default:
+				t.Fatal("hidden submission was discarded")
+			}
+			_, effects := m.Update(result)
+			assert.Nil(t, effects, "submission feedback must not affect the visible tab")
+			assert.False(t, m.activeTab.chatPage.IsWorking())
+			assert.Zero(t, m.activeTab.chatPage.QueueLength())
+		})
+	}
+}

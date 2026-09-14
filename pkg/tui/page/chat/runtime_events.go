@@ -405,9 +405,13 @@ func (p *chatPage) handleStreamStopped(msg *runtime.StreamStoppedEvent) tea.Cmd 
 	var exitCmd tea.Cmd
 	if p.app.ShouldExitAfterFirstResponse() && p.hasReceivedAssistantContent {
 		slog.Debug("Exit after first response triggered, scheduling delayed exit")
-		exitCmd = tea.Tick(50*time.Millisecond, func(time.Time) tea.Msg {
-			return msgtypes.ExitAfterFirstResponseMsg{}
-		})
+		routingID, application := p.routingID, p.app
+		exitCmd = p.global(tea.Tick(50*time.Millisecond, func(time.Time) tea.Msg {
+			if routingID == "" {
+				return msgtypes.ExitAfterFirstResponseMsg{}
+			}
+			return GlobalMsg{TabID: routingID, Origin: p, Application: application, Inner: msgtypes.ExitAfterFirstResponseMsg{}}
+		}))
 	}
 
 	return tea.Batch(finalizeCmd, p.messages.ScrollToBottom(), spinnerCmd, sidebarCmd, queueCmd, exitCmd)
