@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	"github.com/docker/docker-agent/pkg/tui/components/messages"
+	msgtypes "github.com/docker/docker-agent/pkg/tui/messages"
 	"github.com/docker/docker-agent/pkg/tui/service"
 	"github.com/docker/docker-agent/pkg/tui/types"
 )
@@ -136,12 +137,9 @@ func assistantMessageAdded(sessionID string, parts ...chat.MessagePart) *runtime
 	return runtime.MessageAdded(sessionID, msg, "root").(*runtime.MessageAddedEvent)
 }
 
-// resolveArmedMedia runs the asynchronous resolution command the page armed
-// (recorded like a routed timer, so it survives background-tab dispatch)
-// and returns the resolved-media message it produced.
-func resolveArmedMedia(t *testing.T, p *chatPage) generatedMediaResolvedMsg {
+// resolveMedia runs the returned command and extracts its media result.
+func resolveMedia(t *testing.T, cmd tea.Cmd) generatedMediaResolvedMsg {
 	t.Helper()
-	cmd := p.TakeRoutedTimers()
 	require.NotNil(t, cmd, "an async resolution command must be armed")
 	for _, msg := range runTimerCmd(t, cmd) {
 		if resolved, ok := msg.(generatedMediaResolvedMsg); ok {
@@ -168,7 +166,7 @@ func TestMessageAdded_TextAndWorkspaceImageJoinSameTurn(t *testing.T) {
 	require.True(t, handled)
 	require.Equal(t, 1, rec.MessageTypeCount(types.MessageTypeAssistant))
 
-	handled, _ = p.handleRuntimeEvent(assistantMessageAdded(owner,
+	handled, cmd := p.handleRuntimeEvent(assistantMessageAdded(owner,
 		chat.MessagePart{Type: chat.MessagePartTypeText, Text: "Here is your cat:"},
 		workspaceImagePart("cat.png", "cat.png", owner),
 	))
@@ -185,7 +183,7 @@ func TestMessageAdded_TextAndWorkspaceImageJoinSameTurn(t *testing.T) {
 	assert.NotZero(t, placeholder.ID, "a resolvable item must carry a replacement ID")
 	assert.Zero(t, rt.resolveCalls(), "the resolver must never run synchronously inside Update")
 
-	resolved := resolveArmedMedia(t, p)
+	resolved := resolveMedia(t, cmd)
 	_, _ = p.update(resolved)
 
 	assert.Equal(t, 1, rt.resolveCalls())
@@ -223,7 +221,7 @@ func TestMessageAdded_LabelsUseFinalPersistedDocumentName(t *testing.T) {
 	}}
 	p, rec := newGeneratedMediaTestPage(t, rt)
 
-	handled, _ := p.handleRuntimeEvent(assistantMessageAdded(owner,
+	handled, cmd := p.handleRuntimeEvent(assistantMessageAdded(owner,
 		chat.MessagePart{Type: chat.MessagePartTypeText, Text: "Here is your red panda coding at a terminal:"},
 		workspaceImagePart("red-panda-terminal.png", "assets/red-panda-terminal.png", owner),
 		workspaceImagePart("red-panda-terminal-1.png", "assets/red-panda-terminal-1.png", owner),
@@ -237,7 +235,7 @@ func TestMessageAdded_LabelsUseFinalPersistedDocumentName(t *testing.T) {
 	assert.Equal(t, `Generated image "red-panda-terminal-1.png" is unavailable.`, rec.mediaCalls[0][1].Fallback,
 		"a collision-suffixed final name must be shown as persisted")
 
-	_, _ = p.update(resolveArmedMedia(t, p))
+	_, _ = p.update(resolveMedia(t, cmd))
 	require.Len(t, rec.mediaUpdates, 1)
 	require.Len(t, rec.mediaUpdates[0], 2)
 
@@ -268,7 +266,7 @@ func TestMessageAdded_MediaOnlyTurnReplacesSpinner(t *testing.T) {
 	require.Equal(t, 1, rec.MessageTypeCount(types.MessageTypeSpinner),
 		"a real pending spinner must exist before the media arrives")
 
-	handled, _ := p.handleRuntimeEvent(assistantMessageAdded(owner, workspaceImagePart("cat.png", "cat.png", owner)))
+	handled, cmd := p.handleRuntimeEvent(assistantMessageAdded(owner, workspaceImagePart("cat.png", "cat.png", owner)))
 	require.True(t, handled)
 
 	assert.Zero(t, rec.MessageTypeCount(types.MessageTypeSpinner),
@@ -278,7 +276,7 @@ func TestMessageAdded_MediaOnlyTurnReplacesSpinner(t *testing.T) {
 	require.Len(t, rec.mediaCalls, 1)
 	assert.True(t, p.hasReceivedAssistantContent, "media-only output counts as assistant content")
 
-	_, _ = p.update(resolveArmedMedia(t, p))
+	_, _ = p.update(resolveMedia(t, cmd))
 	require.Len(t, rec.mediaUpdates, 1)
 	require.NotNil(t, rec.mediaUpdates[0][0].Image)
 }
@@ -293,7 +291,7 @@ func TestMessageAdded_PreservesMediaOrder(t *testing.T) {
 	}}
 	p, rec := newGeneratedMediaTestPage(t, rt)
 
-	handled, _ := p.handleRuntimeEvent(assistantMessageAdded(owner,
+	handled, cmd := p.handleRuntimeEvent(assistantMessageAdded(owner,
 		chat.MessagePart{Type: chat.MessagePartTypeText, Text: "two images"},
 		workspaceImagePart("first.png", "first.png", owner),
 		workspaceImagePart("second.png", "second.png", owner),
@@ -303,7 +301,7 @@ func TestMessageAdded_PreservesMediaOrder(t *testing.T) {
 	require.Len(t, rec.mediaCalls, 1)
 	require.Len(t, rec.mediaCalls[0], 2)
 
-	_, _ = p.update(resolveArmedMedia(t, p))
+	_, _ = p.update(resolveMedia(t, cmd))
 	require.Len(t, rec.mediaUpdates, 1)
 	require.Len(t, rec.mediaUpdates[0], 2)
 	assert.Equal(t, "first.png", rec.mediaUpdates[0][0].Image.Name)
@@ -347,7 +345,6 @@ func TestMessageAdded_NoResolverCapabilityIsNoOp(t *testing.T) {
 	assert.True(t, handled)
 	assert.Nil(t, cmd)
 	assert.Empty(t, rec.mediaCalls)
-	assert.Nil(t, p.TakeRoutedTimers(), "no resolution may be armed without the capability")
 }
 
 func TestMessageAdded_UnresolvableFallsBackToFilenameOnly(t *testing.T) {
@@ -357,11 +354,11 @@ func TestMessageAdded_UnresolvableFallsBackToFilenameOnly(t *testing.T) {
 	rt := &resolverTestRuntime{} // every resolution fails
 	p, rec := newGeneratedMediaTestPage(t, rt)
 
-	handled, _ := p.handleRuntimeEvent(assistantMessageAdded(owner,
+	handled, cmd := p.handleRuntimeEvent(assistantMessageAdded(owner,
 		workspaceImagePart("cat.png", "missing-file.png", owner)))
 	require.True(t, handled)
 
-	_, _ = p.update(resolveArmedMedia(t, p))
+	_, _ = p.update(resolveMedia(t, cmd))
 
 	require.Len(t, rec.mediaUpdates, 1)
 	media := rec.mediaUpdates[0][0]
@@ -383,9 +380,9 @@ func TestMessageAdded_UndecodableFallsBackToCanonicalPath(t *testing.T) {
 	}}
 	p, rec := newGeneratedMediaTestPage(t, rt)
 
-	handled, _ := p.handleRuntimeEvent(assistantMessageAdded(owner, workspaceImagePart("cat.png", "cat.png", owner)))
+	handled, cmd := p.handleRuntimeEvent(assistantMessageAdded(owner, workspaceImagePart("cat.png", "cat.png", owner)))
 	require.True(t, handled)
-	_, _ = p.update(resolveArmedMedia(t, p))
+	_, _ = p.update(resolveMedia(t, cmd))
 
 	require.Len(t, rec.mediaUpdates, 1)
 	media := rec.mediaUpdates[0][0]
@@ -406,8 +403,8 @@ func TestMessageAdded_ControlCharPathStaysUnavailable(t *testing.T) {
 	}}
 	p, rec := newGeneratedMediaTestPage(t, rt)
 
-	_, _ = p.handleRuntimeEvent(assistantMessageAdded(owner, workspaceImagePart("cat.png", "cat.png", owner)))
-	_, _ = p.update(resolveArmedMedia(t, p))
+	_, cmd := p.handleRuntimeEvent(assistantMessageAdded(owner, workspaceImagePart("cat.png", "cat.png", owner)))
+	_, _ = p.update(resolveMedia(t, cmd))
 
 	require.Len(t, rec.mediaUpdates, 1)
 	fallback := rec.mediaUpdates[0][0].Fallback
@@ -422,9 +419,9 @@ func TestMessageAdded_SanitizesHostileDisplayName(t *testing.T) {
 	rt := &resolverTestRuntime{} // resolution fails; only the name reaches the fallback
 	p, rec := newGeneratedMediaTestPage(t, rt)
 
-	_, _ = p.handleRuntimeEvent(assistantMessageAdded(owner,
+	_, cmd := p.handleRuntimeEvent(assistantMessageAdded(owner,
 		workspaceImagePart("../evil/<img>\x1b[31mname.png", "cat.png", owner)))
-	_, _ = p.update(resolveArmedMedia(t, p))
+	_, _ = p.update(resolveMedia(t, cmd))
 
 	require.Len(t, rec.mediaUpdates, 1)
 	fallback := rec.mediaUpdates[0][0].Fallback
@@ -478,15 +475,14 @@ func TestMessageAdded_UnknownRootRefStaysUnavailable(t *testing.T) {
 
 	part := workspaceImagePart("cat.png", "cat.png", owner)
 	part.Document.Source.ArtifactRoot = ""
-	handled, _ := p.handleRuntimeEvent(assistantMessageAdded(owner, part))
-	require.True(t, handled)
+	_, effects := p.UpdateEffects(assistantMessageAdded(owner, part))
 
 	require.Len(t, rec.mediaCalls, 1)
 	media := rec.mediaCalls[0][0]
 	assert.Zero(t, media.ID, "an unknown-root item is final: nothing will replace it")
 	assert.Nil(t, media.Image)
 	assert.Equal(t, `Generated image "cat.png" is unavailable.`, media.Fallback)
-	assert.Nil(t, p.TakeRoutedTimers(), "no resolution may be armed for an unknown-root reference")
+	assert.Nil(t, effects.Local, "no resolution may be armed for an unknown-root reference")
 	assert.Zero(t, rt.resolveCalls())
 }
 
@@ -499,15 +495,14 @@ func TestMessageAdded_ExternalRootRefStaysUnavailable(t *testing.T) {
 
 	part := workspaceImagePart("cat.png", "/tmp/cat.png", owner)
 	part.Document.Source.ArtifactRoot = chat.ArtifactRootKind("external")
-	handled, _ := p.handleRuntimeEvent(assistantMessageAdded(owner, part))
-	require.True(t, handled)
+	_, effects := p.UpdateEffects(assistantMessageAdded(owner, part))
 
 	require.Len(t, rec.mediaCalls, 1)
 	media := rec.mediaCalls[0][0]
 	assert.Zero(t, media.ID)
 	assert.Nil(t, media.Image)
 	assert.Equal(t, `Generated image "cat.png" is unavailable.`, media.Fallback)
-	assert.Nil(t, p.TakeRoutedTimers())
+	assert.Nil(t, effects.Local)
 	assert.Zero(t, rt.resolveCalls())
 }
 
@@ -578,12 +573,12 @@ func TestInit_RestoredSessionResolvesGeneratedMedia(t *testing.T) {
 	}}
 	p, rec := newGeneratedMediaTestPageWithSession(t, rt, restoredMediaSession(owner))
 
-	_ = p.Init()
+	cmd := p.Init()
 
 	require.Equal(t, 3, rec.MessageTypeCount(types.MessageTypeAssistant))
 	assert.Zero(t, rt.resolveCalls(), "restoring a session must not resolve synchronously")
 
-	_, _ = p.update(resolveArmedMedia(t, p))
+	_, _ = p.update(resolveMedia(t, cmd))
 
 	assert.Equal(t, 1, rt.resolveCalls())
 	assert.Equal(t, []runtime.GeneratedFileRef{{
@@ -630,7 +625,51 @@ func TestCollectRestoredGeneratedMedia_NoCapability(t *testing.T) {
 	assert.Nil(t, restored)
 	assert.Nil(t, requests)
 
-	_ = p.Init()
+	cmd := p.Init()
 	require.Equal(t, 3, rec.MessageTypeCount(types.MessageTypeAssistant))
-	assert.Nil(t, p.TakeRoutedTimers())
+	for _, msg := range runTimerCmd(t, cmd) {
+		_, resolved := msg.(generatedMediaResolvedMsg)
+		assert.False(t, resolved)
+	}
+}
+
+func TestMessageAddedReturnsResolutionOnlyAsLocalWork(t *testing.T) {
+	t.Parallel()
+	rt := &resolverTestRuntime{}
+	p, rec := newGeneratedMediaTestPage(t, rt)
+	_, effects := p.UpdateEffects(assistantMessageAdded("owner", workspaceImagePart("cat.png", "cat.png", "owner")))
+	require.Len(t, rec.mediaCalls, 1, "placeholder is inserted during Update")
+	assert.Zero(t, rt.resolveCalls())
+	require.NotNil(t, effects.Local, "hidden pages must dispatch resolution")
+	for _, msg := range runTimerCmd(t, effects.Visible) {
+		_, resolved := msg.(generatedMediaResolvedMsg)
+		assert.False(t, resolved, "resolution must not be duplicated in visible effects")
+	}
+	assert.Zero(t, rt.resolveCalls())
+	_, _ = p.UpdateEffects(resolveMedia(t, effects.Local))
+	assert.Equal(t, 1, rt.resolveCalls())
+	require.Len(t, rec.mediaUpdates, 1)
+}
+
+func TestLocalMediaResultCannotReplaceReloadedPlaceholder(t *testing.T) {
+	t.Parallel()
+	rt := &resolverTestRuntime{results: map[string]resolverResult{
+		"cat.png": {data: testPNGBytes(t), path: "/workspace/cat.png"},
+	}}
+	old, _ := newGeneratedMediaTestPage(t, rt)
+	old.SetRoutingID("same-tab")
+	event := assistantMessageAdded("owner", workspaceImagePart("cat.png", "cat.png", "owner"))
+	_, effects := old.UpdateEffects(event)
+	require.NotNil(t, effects.Local)
+	result := effects.Local().(msgtypes.RoutedMsg)
+	Cleanup(old)
+
+	replacement, rec := newGeneratedMediaTestPage(t, rt)
+	replacement.SetRoutingID("same-tab")
+	t.Cleanup(func() { Cleanup(replacement) })
+	_, _ = replacement.UpdateEffects(event)
+	_, _ = replacement.UpdateEffects(result.Inner)
+	assert.Contains(t, replacement.View(), "unavailable", "old IDs must not replace the new placeholder")
+	require.Len(t, rec.mediaCalls, 1)
+	assert.NotEqual(t, result.Inner.(generatedMediaResolvedMsg).media[0].ID, rec.mediaCalls[0][0].ID)
 }

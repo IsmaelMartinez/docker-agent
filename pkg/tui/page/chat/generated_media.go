@@ -160,8 +160,7 @@ func generatedImageMedia(parts []chat.MessagePart) ([]types.AssistantMedia, []ge
 // resolveGeneratedMediaCmd resolves the requested items on a background
 // goroutine and routes the results back to this page (its tab may be
 // hidden — or another tab active — by the time they arrive). The command
-// is also recorded like a routed timer so an update on a hidden tab keeps
-// the resolution armed.
+// runs as tab-local work even while the page is hidden.
 func (p *chatPage) resolveGeneratedMediaCmd(requests []generatedMediaRequest) tea.Cmd {
 	if len(requests) == 0 {
 		return nil
@@ -178,8 +177,7 @@ func (p *chatPage) resolveGeneratedMediaCmd(requests []generatedMediaRequest) te
 		}
 		return msgtypes.RoutedMsg{SessionID: routingID, Inner: inner}
 	}
-	p.pendingTimers = append(p.pendingTimers, cmd)
-	return cmd
+	return p.tabLocal(cmd)
 }
 
 // resolveGeneratedImage resolves one generated image through the runtime's

@@ -164,7 +164,8 @@ func TestStaleInputResultDoesNotRedispatchTimers(t *testing.T) {
 	Cleanup(old)
 	p := New(animation.NewRuntime(), t.Context(), a, service.NewSessionState(sess)).(*chatPage)
 	t.Cleanup(func() { Cleanup(p) })
-	p.pendingTimers = []tea.Cmd{func() tea.Msg { return struct{}{} }}
-	_, _ = p.Update(result)
-	assert.Nil(t, p.TakeRoutedTimers())
+	_, prior := p.UpdateEffects(runtime.AgentSwitching(true, "root", "child"))
+	require.NotNil(t, prior.Local)
+	_, effects := p.UpdateEffects(result)
+	assert.Nil(t, effects.Cmd(true))
 }

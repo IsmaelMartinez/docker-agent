@@ -72,11 +72,11 @@ func (m *mockChatPage) SetInterruptMode(mode messages.InterruptMode) {
 func (m *mockChatPage) SetShowBanner(show bool) {
 	m.showBanner = show
 }
-func (m *mockChatPage) SetRoutingID(string)       {}
-func (m *mockChatPage) TakeRoutedTimers() tea.Cmd { return nil }
-func (m *mockChatPage) VisualGeneration() uint64  { return 0 }
-func (m *mockChatPage) Bindings() []key.Binding   { return nil }
-func (m *mockChatPage) Help() help.KeyMap         { return nil }
+func (m *mockChatPage) SetRoutingID(string)                             {}
+func (m *mockChatPage) UpdateEffects(tea.Msg) (chat.Page, chat.Effects) { return m, chat.Effects{} }
+func (m *mockChatPage) VisualGeneration() uint64                        { return 0 }
+func (m *mockChatPage) Bindings() []key.Binding                         { return nil }
+func (m *mockChatPage) Help() help.KeyMap                               { return nil }
 
 type countingChatPage struct {
 	mockChatPage
@@ -86,11 +86,11 @@ type countingChatPage struct {
 	dirtyTick bool
 }
 
-func (p *countingChatPage) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
+func (p *countingChatPage) UpdateEffects(msg tea.Msg) (chat.Page, chat.Effects) {
 	if tick, ok := msg.(animation.TickMsg); ok && p.dirtyTick {
 		tick.MarkDirty()
 	}
-	return p, nil
+	return p, chat.Effects{}
 }
 
 func (p *countingChatPage) VisualGeneration() uint64 { return 0 }

@@ -870,6 +870,17 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.RoutedMsg:
 		return m.handleRoutedMsg(msg)
 
+	case chat.GlobalMsg:
+		tab := m.tabs[msg.TabID]
+		if tab == nil || tab.chatPage != msg.Origin {
+			return m, nil
+		}
+		runner := m.supervisor.GetRunner(msg.TabID)
+		if runner == nil || runner.App != msg.Application {
+			return m, nil
+		}
+		return m.Update(msg.Inner)
+
 	case animation.TickMsg:
 		accepted, ok := m.ar.Accept(msg)
 		if !ok {
@@ -1522,7 +1533,7 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 	}
 
 	// Background session: update its chat page directly so streaming content accumulates.
-	// UI-only cmds (spinners, scroll) are discarded since the page isn't visible.
+	// Only tab-local work and global effects are dispatched for hidden pages.
 	tab := m.tabs[msg.SessionID]
 	if tab == nil || tab.chatPage == nil {
 		return m, nil
@@ -1543,20 +1554,14 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 		}
 	}
 
-	// Update the inactive chat page (discard cmds — UI effects aren't needed for hidden pages),
-	// except its routed one-shot timers: presentation deadlines (e.g. the sidebar's transfer box)
-	// must keep running while the tab is hidden, and their expiry lands back here as a RoutedMsg
-	// for this page. Applying such a timer arms no new ones, so this cannot loop.
-	updated, _ := tab.chatPage.Update(msg.Inner)
-	page := updated.(chat.Page)
+	page, effects := tab.chatPage.UpdateEffects(msg.Inner)
 	tab.chatPage = page
 
-	// Shared plans are scope-global: a mutation from a background tab's agent
-	// must still live-refresh the plan dialogs open on the active tab.
+	// Shared plan mutations refresh the visible browser, regardless of origin.
 	if _, isPlanChange := msg.Inner.(*runtime.PlanChangedEvent); isPlanChange && m.planDialogOpen() {
-		return m, tea.Batch(page.TakeRoutedTimers(), m.planRefreshCmd(false))
+		effects.Global = tea.Batch(effects.Global, m.planRefreshCmd(false))
 	}
-	return m, page.TakeRoutedTimers()
+	return m, effects.Cmd(false)
 }
 
 // applyPauseEvent advances a session's pause indicator in response to runtime
