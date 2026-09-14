@@ -644,6 +644,20 @@ func (m *model) handleMouseRelease(msg tea.MouseReleaseMsg) (layout.Model, tea.C
 	return m, nil
 }
 
+var messageKeys = struct {
+	Escape, Up, Down, Copy, Edit, PageUp, PageDown, Home, End key.Binding
+}{
+	key.NewBinding(key.WithKeys("esc")),
+	key.NewBinding(key.WithKeys("up", "k")),
+	key.NewBinding(key.WithKeys("down", "j")),
+	key.NewBinding(key.WithKeys("c")),
+	key.NewBinding(key.WithKeys("e")),
+	key.NewBinding(key.WithKeys("pgup")),
+	key.NewBinding(key.WithKeys("pgdown")),
+	key.NewBinding(key.WithKeys("home", "g")),
+	key.NewBinding(key.WithKeys("end", "G")),
+}
+
 func (m *model) handleKeyPress(msg tea.KeyPressMsg) (layout.Model, tea.Cmd) {
 	// Handle inline editing keys first
 	if m.inlineEditMsgIndex >= 0 {
@@ -680,11 +694,11 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (layout.Model, tea.Cmd) {
 		}
 	}
 
-	switch msg.String() {
-	case "esc":
+	switch {
+	case key.Matches(msg, messageKeys.Escape):
 		m.clearSelection()
 		return m, nil
-	case "up", "k":
+	case key.Matches(msg, messageKeys.Up):
 		if m.focused {
 			cmd := m.selectPreviousMessage()
 			return m, cmd
@@ -692,7 +706,7 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (layout.Model, tea.Cmd) {
 			m.scrollUp()
 		}
 		return m, nil
-	case "down", "j":
+	case key.Matches(msg, messageKeys.Down):
 		if m.focused {
 			cmd := m.selectNextMessage()
 			return m, cmd
@@ -700,13 +714,13 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (layout.Model, tea.Cmd) {
 			cmd := m.scrollDown()
 			return m, cmd
 		}
-	case "c":
+	case key.Matches(msg, messageKeys.Copy):
 		if m.focused && m.selectedMessageIndex >= 0 {
 			cmd := m.copySelectedMessageToClipboard()
 			return m, cmd
 		}
 		return m, nil
-	case "e":
+	case key.Matches(msg, messageKeys.Edit):
 		if m.focused && m.selectedMessageIndex >= 0 {
 			msg := m.messages[m.selectedMessageIndex]
 			if msg.Type == types.MessageTypeUser && msg.SessionPosition != nil {
@@ -720,16 +734,16 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (layout.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case "pgup":
+	case key.Matches(msg, messageKeys.PageUp):
 		m.scrollPageUp()
 		return m, nil
-	case "pgdown":
+	case key.Matches(msg, messageKeys.PageDown):
 		cmd := m.scrollPageDown()
 		return m, cmd
-	case "home", "g":
+	case key.Matches(msg, messageKeys.Home):
 		m.scrollToTop()
 		return m, nil
-	case "end", "G":
+	case key.Matches(msg, messageKeys.End):
 		cmd := m.scrollToBottom()
 		return m, cmd
 	}
