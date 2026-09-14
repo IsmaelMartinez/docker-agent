@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/page/chat"
 	"github.com/docker/docker-agent/pkg/tui/service"
 	"github.com/docker/docker-agent/pkg/tui/service/supervisor"
+	"github.com/docker/docker-agent/pkg/tui/service/tabstate"
 	"github.com/docker/docker-agent/pkg/tui/service/tuistate"
 	"github.com/docker/docker-agent/pkg/userconfig"
 )
@@ -16,6 +17,7 @@ import (
 // tabModel owns the UI state keyed by a runtime tab ID, not the session-store ID.
 // A restored tab can exist before its editor and chat page are initialized.
 type tabModel struct {
+	state        *tabstate.State
 	chatPage     chat.Page
 	editor       editor.Editor
 	sessionState *service.SessionState
@@ -28,11 +30,16 @@ type tabModel struct {
 }
 
 func (m *appModel) ensureTab(tabID string) *tabModel {
-	if tab := m.tabs[tabID]; tab != nil {
-		return tab
+	tab := m.tabs[tabID]
+	if tab == nil {
+		tab = &tabModel{}
+		m.tabs[tabID] = tab
 	}
-	tab := &tabModel{}
-	m.tabs[tabID] = tab
+	if tab.state == nil && m.supervisor != nil {
+		if runner := m.supervisor.GetRunner(tabID); runner != nil {
+			tab.state = runner.State
+		}
+	}
 	return tab
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/paths"
+	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/commands"
 	"github.com/docker/docker-agent/pkg/tui/components/editor"
@@ -80,7 +81,7 @@ func TestSwitchTabFailureLeavesDialogAndComponents(t *testing.T) {
 	assert.Same(t, state, m.activeTab.sessionState)
 	assert.Same(t, prompt, m.dialogMgr.TopDialog())
 	assert.Nil(t, m.tabs[id].stashedDialog)
-	assert.Nil(t, m.supervisor.ConsumePendingEvent(id))
+	assert.Nil(t, m.ensureTab(id).state.Consume())
 	assert.True(t, hasMsg[notification.ShowMsg](collectMsgs(cmd)))
 }
 
@@ -352,4 +353,24 @@ func TestClearSessionPersistsNewConversation(t *testing.T) {
 	require.Len(t, tabs, 1)
 	assert.Equal(t, newID, tabs[0].SessionID)
 	assert.Equal(t, newID, activeID)
+}
+
+func TestTabOwnsRuntimeAttentionState(t *testing.T) {
+	t.Parallel()
+	m := newTabLifecycleModel(t)
+	id := m.supervisor.ActiveID()
+	tab := m.tabs[id]
+	require.Same(t, m.supervisor.GetRunner(id).State, tab.state)
+	tab.state.Apply(&runtime.ElicitationRequestEvent{Message: "prompt"}, false)
+	tabs, _ := m.supervisor.GetTabs()
+	require.Len(t, tabs, 1)
+	assert.True(t, tabs[0].NeedsAttention)
+
+	_, _ = m.handleSpawnSession("/second")
+	_, _ = m.handleSwitchTab(id)
+	assert.Same(t, tab, m.activeTab)
+	assert.Same(t, m.supervisor.GetRunner(id).State, tab.state)
+	assert.Nil(t, tab.state.Consume(), "activation drains the owning tab's queue")
+	tabs, _ = m.supervisor.GetTabs()
+	assert.False(t, tabs[0].NeedsAttention)
 }

@@ -545,6 +545,7 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 
 	// Add the initial session to the supervisor
 	sv.AddSession(ctx, initialApp, initialApp.Session(), initialWorkingDir, cleanup)
+	m.ensureTab(sessID)
 
 	// Restore persisted tabs or persist the initial one.
 	m.restoreTabs(ctx, ts, sv, spawner, initialApp, sessID, initialWorkingDir)
@@ -1888,7 +1889,7 @@ func (m *appModel) openWorkingDirPicker() (tea.Model, tea.Cmd) {
 // stashedDialog holds a background dialog instance that was on screen when
 // the user navigated away from a tab, paired with the runtime event that
 // caused it to open. The event is used as an identity check on return: if
-// the supervisor's pending event for the tab no longer matches, the agent
+// the tab's pending event no longer matches, the agent
 // has superseded the prompt and we discard the stash in favour of building
 // a fresh dialog from the new event.
 type stashedDialog struct {
@@ -1929,7 +1930,7 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	// Now that the switch is committed, finalize the dialog hand-off.
 	var closeBackgroundDialogCmd tea.Cmd
 	if backgroundEvent != nil && outgoingTabID != "" && outgoingTabID != sessionID {
-		m.supervisor.SetPendingEvent(outgoingTabID, backgroundEvent)
+		m.ensureTab(outgoingTabID).state.Prepend(backgroundEvent)
 		if backgroundDialog != nil {
 			m.ensureTab(outgoingTabID).stashedDialog = &stashedDialog{
 				dialog: backgroundDialog,
@@ -2044,14 +2045,14 @@ func (m *appModel) replayPendingEvent(sessionID string) tea.Cmd {
 	if tab == nil {
 		return nil
 	}
-	if tab.sessionState == nil {
+	if tab.sessionState == nil || tab.state == nil {
 		tab.stashedDialog = nil
 		return nil
 	}
 
 	var cmds []tea.Cmd
 	for first := true; ; first = false {
-		pendingEvent := m.supervisor.ConsumePendingEvent(sessionID)
+		pendingEvent := tab.state.Consume()
 		if pendingEvent == nil {
 			if first {
 				// No pending event at all: any stash is stale (e.g. the agent finished).

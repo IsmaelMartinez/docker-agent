@@ -43,8 +43,7 @@ func TestReplayPendingEvent_RestoresStashedDialog(t *testing.T) {
 
 	const sessionID = "session-A"
 
-	// Build a model with a single-session supervisor so ConsumePendingEvent
-	// has a real runner to read from.
+	// Build a model with a single-session supervisor sharing the tab's attention state.
 	m, _ := newTestModel(t)
 	m.supervisor = supervisor.New(nil)
 	require.NotEmpty(t, m.supervisor.AddSession(
@@ -57,10 +56,10 @@ func TestReplayPendingEvent_RestoresStashedDialog(t *testing.T) {
 	m.ensureTab(sessionID).sessionState = service.NewSessionState(&session.Session{ID: sessionID})
 
 	// Simulate the pre-conditions of a tab-switch-while-dialog-open:
-	//   - the supervisor has a pending event for this tab
+	//   - the tab has a pending event
 	//   - the appModel has stashed the live dialog instance keyed by tab.
 	event := &runtime.ElicitationRequestEvent{Message: "ask the user"}
-	m.supervisor.SetPendingEvent(sessionID, event)
+	m.ensureTab(sessionID).state.Prepend(event)
 
 	stashed := &stubDialog{id: "stashed"}
 	m.ensureTab(sessionID).stashedDialog = &stashedDialog{
@@ -116,10 +115,10 @@ func TestReplayPendingEvent_DiscardsStaleStash(t *testing.T) {
 	}
 
 	// While the user was away the agent superseded the prompt with a new
-	// elicitation. The supervisor's pending event no longer matches the
+	// elicitation. The tab's pending event no longer matches the
 	// stashed one.
 	newEvent := &runtime.ElicitationRequestEvent{Message: "replacement prompt"}
-	m.supervisor.SetPendingEvent(sessionID, newEvent)
+	m.ensureTab(sessionID).state.Prepend(newEvent)
 
 	cmd := m.replayPendingEvent(sessionID)
 	require.NotNil(t, cmd)
@@ -159,7 +158,7 @@ func TestReplayPendingEvent_NoPendingEvent_ClearsStash(t *testing.T) {
 	)
 	m.ensureTab(sessionID).sessionState = service.NewSessionState(&session.Session{ID: sessionID})
 
-	// Stash exists but the supervisor has no pending event (e.g. the stream
+	// Stash exists but the tab has no pending event (e.g. the stream
 	// stopped while the user was on another tab).
 	m.ensureTab(sessionID).stashedDialog = &stashedDialog{
 		dialog: &stubDialog{id: "orphan"},
@@ -237,7 +236,8 @@ func TestReplayPendingEvent_ReplaysConcurrentElicitationsInFIFOOrder(t *testing.
 	second := &runtime.ElicitationRequestEvent{Message: "worker2 needs input", ElicitationID: "e2"}
 	runner := m.supervisor.GetRunner(sessionID)
 	require.NotNil(t, runner)
-	runner.PendingEvents = []tea.Msg{first, second}
+	m.ensureTab(sessionID).state.Prepend(second)
+	m.ensureTab(sessionID).state.Prepend(first)
 
 	cmd := m.replayPendingEvent(sessionID)
 	require.NotNil(t, cmd)
