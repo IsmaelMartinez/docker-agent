@@ -881,6 +881,7 @@ func (m *model) SetSize(width, height int) tea.Cmd {
 	if m.width == width && m.height == height {
 		return nil // Dimensions unchanged — skip expensive cache invalidation
 	}
+	widthChanged := m.width != width
 	m.width = width
 	m.height = height
 
@@ -890,7 +891,11 @@ func (m *model) SetSize(width, height int) tea.Cmd {
 		view.SetSize(contentWidth, 0)
 	}
 
-	m.invalidateAllItems()
+	// Height changes affect the viewport, not the cached message renderings.
+	if widthChanged {
+		m.renderedItems.Clear()
+	}
+	m.invalidateLines()
 	m.visualGeneration++
 	return nil
 }
@@ -1479,7 +1484,15 @@ func (m *model) ensureAllItemsRendered() {
 		return
 	}
 
-	var allLines []string
+	// Cached heights avoid repeatedly growing the flattened history buffer.
+	lineCapacity := len(m.views)
+	m.renderedItems.Range(func(index int, item renderedItem) bool {
+		if item.segments == nil || index != len(m.views)-1 {
+			lineCapacity += item.height
+		}
+		return true
+	})
+	allLines := make([]string, 0, lineCapacity)
 	m.activeSegments = nil
 	offsets := make([]int, len(m.views))
 	virtualHeight := 0
@@ -1625,6 +1638,10 @@ func (m *model) invalidateItem(index int) {
 
 func (m *model) invalidateAllItems() {
 	m.renderedItems.Clear()
+	m.invalidateLines()
+}
+
+func (m *model) invalidateLines() {
 	m.renderedLines = nil
 	m.lineOffsets = nil
 	m.totalHeight = 0
