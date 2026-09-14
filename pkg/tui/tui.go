@@ -545,6 +545,7 @@ func New(ctx context.Context, spawner SessionSpawner, initialApp *app.App, initi
 
 	// Add the initial session to the supervisor
 	sv.AddSession(ctx, initialApp, initialApp.Session(), initialWorkingDir, cleanup)
+	m.ensureTab(sessID)
 
 	// Restore persisted tabs or persist the initial one.
 	m.restoreTabs(ctx, ts, sv, spawner, initialApp, sessID, initialWorkingDir)
@@ -1686,6 +1687,7 @@ func (m *appModel) handleLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 	model, switchCmd := m.handleSwitchTab(newSessionID)
 
 	// Replace the blank session with the loaded one and rebuild all components.
+	m.bindTabSession(newSessionID, sess.ID)
 	m.application.ReplaceSession(ctx, sess)
 	m.initSessionComponents(newSessionID, m.application, sess)
 
@@ -1706,6 +1708,7 @@ func (m *appModel) handleLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 // a fresh runtime is spawned via the supervisor so that tools operate in the correct directory.
 func (m *appModel) replaceActiveSession(ctx context.Context, sess *session.Session) (tea.Model, tea.Cmd) {
 	activeID := m.supervisor.ActiveID()
+	m.bindTabSession(activeID, sess.ID)
 
 	slog.DebugContext(ctx, "Replacing empty session in-place", "tab_id", activeID, "loaded_session", sess.ID)
 
@@ -1749,6 +1752,7 @@ func (m *appModel) replaceActiveSession(ctx context.Context, sess *session.Sessi
 // in the same working directory.
 func (m *appModel) handleClearSession() (tea.Model, tea.Cmd) {
 	activeID := m.supervisor.ActiveID()
+	oldPersistedID := m.persistedSessionID(activeID)
 
 	// Cleanup old editor for the active session.
 	if tab := m.tabs[activeID]; tab != nil && tab.editor != nil {
@@ -1758,6 +1762,7 @@ func (m *appModel) handleClearSession() (tea.Model, tea.Cmd) {
 	// Create a fresh session in the same app, preserving the working dir.
 	m.application.NewSession()
 	newSess := m.application.Session()
+	m.bindTabSession(activeID, newSess.ID)
 
 	// Rebuild all per-session UI components.
 	m.initSessionComponents(activeID, m.application, newSess)
@@ -1769,7 +1774,6 @@ func (m *appModel) handleClearSession() (tea.Model, tea.Cmd) {
 	// Update persisted tab to point to the new session.
 	if m.tuiStore != nil {
 		ctx := m.ctx()
-		oldPersistedID := m.persistedSessionID(activeID)
 		if err := m.tuiStore.UpdateTabSessionID(ctx, oldPersistedID, newSess.ID); err != nil {
 			slog.WarnContext(ctx, "Failed to update tab session ID after clear", "error", err)
 		}
@@ -1888,7 +1892,7 @@ func (m *appModel) openWorkingDirPicker() (tea.Model, tea.Cmd) {
 // stashedDialog holds a background dialog instance that was on screen when
 // the user navigated away from a tab, paired with the runtime event that
 // caused it to open. The event is used as an identity check on return: if
-// the supervisor's pending event for the tab no longer matches, the agent
+// the tab's pending event no longer matches, the agent
 // has superseded the prompt and we discard the stash in favour of building
 // a fresh dialog from the new event.
 type stashedDialog struct {
@@ -1929,7 +1933,7 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	// Now that the switch is committed, finalize the dialog hand-off.
 	var closeBackgroundDialogCmd tea.Cmd
 	if backgroundEvent != nil && outgoingTabID != "" && outgoingTabID != sessionID {
-		m.supervisor.SetPendingEvent(outgoingTabID, backgroundEvent)
+		m.ensureTab(outgoingTabID).state.Prepend(backgroundEvent)
 		if backgroundDialog != nil {
 			m.ensureTab(outgoingTabID).stashedDialog = &stashedDialog{
 				dialog: backgroundDialog,
@@ -2044,14 +2048,14 @@ func (m *appModel) replayPendingEvent(sessionID string) tea.Cmd {
 	if tab == nil {
 		return nil
 	}
-	if tab.sessionState == nil {
+	if tab.sessionState == nil || tab.state == nil {
 		tab.stashedDialog = nil
 		return nil
 	}
 
 	var cmds []tea.Cmd
 	for first := true; ; first = false {
-		pendingEvent := m.supervisor.ConsumePendingEvent(sessionID)
+		pendingEvent := tab.state.Consume()
 		if pendingEvent == nil {
 			if first {
 				// No pending event at all: any stash is stale (e.g. the agent finished).
