@@ -1171,9 +1171,20 @@ func (a *App) SteerMessage(ctx context.Context, content string, attachments []me
 
 // QueueSteerMessage is SteerMessage with the queue entry returned for cancellation.
 func (a *App) QueueSteerMessage(ctx context.Context, content string, attachments []messages.Attachment) (runtime.QueuedMessage, error) {
+	return a.QueueSteerMessageForSession(ctx, a.session, content, attachments)
+}
+
+// QueueSteerMessageForSession uses the caller's session snapshot during asynchronous attachment resolution.
+func (a *App) QueueSteerMessageForSession(ctx context.Context, sess *session.Session, content string, attachments []messages.Attachment) (runtime.QueuedMessage, error) {
 	msg := runtime.QueuedMessage{ID: uuid.NewString(), Content: content}
+	if err := ctx.Err(); err != nil {
+		return msg, err
+	}
 	if len(attachments) > 0 {
-		msg.MultiContent = a.buildUserMultiContent(ctx, a.session, content, attachments)
+		msg.MultiContent = a.buildUserMultiContent(ctx, sess, content, attachments)
+	}
+	if err := ctx.Err(); err != nil {
+		return msg, err
 	}
 	return msg, a.runtime.Steer(ctx, msg)
 }
@@ -1187,9 +1198,20 @@ func (a *App) FollowUpMessage(ctx context.Context, content string, attachments [
 
 // QueueFollowUpMessage is FollowUpMessage with the queue entry returned for cancellation.
 func (a *App) QueueFollowUpMessage(ctx context.Context, content string, attachments []messages.Attachment) (runtime.QueuedMessage, error) {
+	return a.QueueFollowUpMessageForSession(ctx, a.session, content, attachments)
+}
+
+// QueueFollowUpMessageForSession uses the caller's session snapshot during asynchronous attachment resolution.
+func (a *App) QueueFollowUpMessageForSession(ctx context.Context, sess *session.Session, content string, attachments []messages.Attachment) (runtime.QueuedMessage, error) {
 	msg := runtime.QueuedMessage{ID: uuid.NewString(), Content: content}
+	if err := ctx.Err(); err != nil {
+		return msg, err
+	}
 	if len(attachments) > 0 {
-		msg.MultiContent = a.buildUserMultiContent(ctx, a.session, content, attachments)
+		msg.MultiContent = a.buildUserMultiContent(ctx, sess, content, attachments)
+	}
+	if err := ctx.Err(); err != nil {
+		return msg, err
 	}
 	return msg, a.runtime.FollowUp(ctx, msg)
 }
