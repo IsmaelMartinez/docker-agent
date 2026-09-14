@@ -19,14 +19,15 @@ import (
 
 // fakeProvider is a Provider stub used to verify factory dispatch.
 type fakeProvider struct {
-	id modelsdev.ID
+	id     modelsdev.ID
+	config base.Config
 }
 
 func (f *fakeProvider) ID() modelsdev.ID { return f.id }
 func (f *fakeProvider) CreateChatCompletionStream(_ context.Context, _ []chat.Message, _ []tools.Tool) (chat.MessageStream, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *fakeProvider) BaseConfig() base.Config { return base.Config{} }
+func (f *fakeProvider) BaseConfig() base.Config { return f.config }
 
 func tagFactory(id string) providerFactory {
 	return func(_ context.Context, _ *latest.ModelConfig, _ environment.Provider, _ ...options.Opt) (Provider, error) {
