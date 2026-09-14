@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -41,6 +42,7 @@ type ToolOutput struct {
 type HTTPOptions struct {
 	CLISafety      session.SafetyPolicy
 	AuthToken      string
+	Out            io.Writer
 	OnSafetyPolicy func(servesafety.Resolved)
 }
 
@@ -104,7 +106,9 @@ func StartHTTPServer(ctx context.Context, agentFilename, agentName string, runCo
 		return err
 	}
 
-	fmt.Printf("MCP HTTP server listening on http://%s\n", ln.Addr())
+	if options.Out != nil {
+		fmt.Fprintf(options.Out, "MCP HTTP server listening on http://%s\n", ln.Addr())
+	}
 
 	handler := newStreamableHTTPHandler(server)
 	if options.AuthToken != "" {

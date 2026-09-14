@@ -41,6 +41,7 @@ var cops = []cop.Cop{
 	ErrorStringMatching,
 	DeferMutexUnlock,
 	EnvironmentVariablePrefix,
+	NoStdoutInLibraries,
 	OTelTracerName,
 }
 
