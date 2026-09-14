@@ -38,6 +38,7 @@ var cops = []cop.Cop{
 	ConstructorCommandExec,
 	ConstructorNetworkIO,
 	WrapErrors,
+	ErrorStringMatching,
 	DeferMutexUnlock,
 	EnvironmentVariablePrefix,
 	OTelTracerName,

@@ -840,14 +840,17 @@ const SkillSourceLocal = "local"
 
 // errSkillsFormat is returned when the `skills` value is neither a boolean nor
 // a list of strings and/or inline skill definitions.
-var errSkillsFormat = errors.New("skills must be a boolean or a list of skill sources, names, and/or inline skill definitions")
+var (
+	errSkillsFormat       = errors.New("skills must be a boolean or a list of skill sources, names, and/or inline skill definitions")
+	errInvalidInlineSkill = errors.New("invalid inline skill")
+)
 
 // skillsFormatError maps a list-decode failure to a user-facing error. When the
 // failure carries a specific inline-skill diagnostic (an unknown/misspelled
 // field surfaced by skillListItem), that detail is preserved; otherwise the
 // generic shape hint is returned.
 func skillsFormatError(err error) error {
-	if err != nil && strings.Contains(err.Error(), "invalid inline skill") {
+	if errors.Is(err, errInvalidInlineSkill) {
 		return err
 	}
 	return errSkillsFormat
@@ -969,7 +972,7 @@ func (i *skillListItem) UnmarshalYAML(unmarshal func(any) error) error {
 	// than the generic errSkillsFormat so the user can see what's wrong.
 	var inline InlineSkill
 	if err := unmarshal(&inline); err != nil {
-		return fmt.Errorf("invalid inline skill: %w", err)
+		return fmt.Errorf("%w: %w", errInvalidInlineSkill, err)
 	}
 	i.inline = &inline
 	return nil
@@ -983,7 +986,7 @@ func (i *skillListItem) UnmarshalJSON(data []byte) error {
 	}
 	var inline InlineSkill
 	if err := json.Unmarshal(data, &inline); err != nil {
-		return fmt.Errorf("invalid inline skill: %w", err)
+		return fmt.Errorf("%w: %w", errInvalidInlineSkill, err)
 	}
 	i.inline = &inline
 	return nil

@@ -2048,12 +2048,19 @@ func (r *LocalRuntime) Resume(_ context.Context, req ResumeRequest) {
 	}
 }
 
+var (
+	// ErrSteerQueueFull indicates that no more steering messages can be queued.
+	ErrSteerQueueFull = errors.New("steer queue full")
+	// ErrFollowUpQueueFull indicates that no more follow-up messages can be queued.
+	ErrFollowUpQueueFull = errors.New("follow-up queue full")
+)
+
 // Steer enqueues a user message for urgent mid-turn injection into the
 // running agent loop. The message will be picked up after the current batch
 // of tool calls finishes but before the loop checks whether to stop.
 func (r *LocalRuntime) Steer(ctx context.Context, msg QueuedMessage) error {
 	if !r.steerQueue.Enqueue(ctx, msg) {
-		return errors.New("steer queue full")
+		return ErrSteerQueueFull
 	}
 	return nil
 }
@@ -2063,7 +2070,7 @@ func (r *LocalRuntime) Steer(ctx context.Context, msg QueuedMessage) error {
 // a full undivided agent turn.
 func (r *LocalRuntime) FollowUp(ctx context.Context, msg QueuedMessage) error {
 	if !r.followUpQueue.Enqueue(ctx, msg) {
-		return errors.New("follow-up queue full")
+		return ErrFollowUpQueueFull
 	}
 	return nil
 }
