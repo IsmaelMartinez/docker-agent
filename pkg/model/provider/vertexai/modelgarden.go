@@ -32,9 +32,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 
-	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
 	"github.com/docker/docker-agent/pkg/config/latest"
@@ -200,18 +198,21 @@ func newOpenAIClient(ctx context.Context, cfg *latest.ModelConfig, env environme
 	if err != nil {
 		return nil, fmt.Errorf("failed to obtain GCP credentials for Vertex AI: %w (run 'gcloud auth application-default login')", err)
 	}
-	token, err := tokenSource.Token()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get GCP access token: %w", err)
-	}
+	return newOpenAIClientWithTokenSource(ctx, cfg, env, project, location, func(context.Context) (string, error) {
+		token, err := tokenSource.Token()
+		if err != nil {
+			return "", err
+		}
+		return token.AccessToken, nil
+	}, opts...)
+}
 
-	// Build a config for the OpenAI provider with the Vertex base URL and a
-	// synthetic token env var that the wrapping env provider resolves to a
-	// fresh GCP access token.
-	const tokenEnvVar = "_VERTEX_AI_ACCESS_TOKEN"
+func newOpenAIClientWithTokenSource(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider, project, location string, tokenSource options.TokenSource, opts ...options.Opt) (*openai.Client, error) {
+	baseURL := "https://" + location + "-aiplatform.googleapis.com/v1beta1/projects/" +
+		url.PathEscape(project) + "/locations/" + url.PathEscape(location) + "/endpoints/openapi"
 	oaiCfg := cfg.Clone()
 	oaiCfg.BaseURL = baseURL
-	oaiCfg.TokenKey = tokenEnvVar
+	oaiCfg.TokenKey = ""
 
 	// Strip Vertex-specific provider_opts before handing off to the OpenAI
 	// provider, and force the chat-completions API type.
@@ -223,40 +224,5 @@ func newOpenAIClient(ctx context.Context, cfg *latest.ModelConfig, env environme
 	delete(oaiCfg.ProviderOpts, "publisher")
 	oaiCfg.ProviderOpts["api_type"] = "openai_chatcompletions"
 
-	wrappedEnv := &tokenEnv{
-		Provider: env,
-		key:      tokenEnvVar,
-		tok:      token.AccessToken,
-		ts:       tokenSource,
-	}
-
-	return openai.NewClient(ctx, oaiCfg, wrappedEnv, opts...)
-}
-
-// tokenEnv wraps an environment.Provider to inject a GCP access token,
-// refreshing it on each Get call (TokenSource handles caching internally).
-type tokenEnv struct {
-	environment.Provider
-
-	key string
-	mu  sync.Mutex
-	tok string
-	ts  oauth2.TokenSource
-}
-
-func (e *tokenEnv) Get(ctx context.Context, name string) (string, bool) {
-	if name != e.key {
-		return e.Provider.Get(ctx, name)
-	}
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	tok, err := e.ts.Token()
-	if err != nil {
-		slog.WarnContext(ctx, "Failed to refresh GCP access token, using cached", "error", err)
-		return e.tok, true
-	}
-	e.tok = tok.AccessToken
-	return e.tok, true
+	return openai.NewClient(ctx, oaiCfg, env, append(opts, options.WithTokenSource(tokenSource))...)
 }
