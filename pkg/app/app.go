@@ -16,6 +16,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/google/uuid"
 
 	"github.com/docker/docker-agent/pkg/app/export"
 	"github.com/docker/docker-agent/pkg/app/transcript"
@@ -1148,26 +1149,49 @@ func (a *App) FollowUp(ctx context.Context, msg runtime.QueuedMessage) error {
 	return a.runtime.FollowUp(ctx, msg)
 }
 
+// CancelPendingMessage withdraws a queued steer or follow-up before the runtime
+// consumes it. Runtimes without queue cancellation support return false.
+func (a *App) CancelPendingMessage(ctx context.Context, msg runtime.QueuedMessage, followUp bool) bool {
+	canceler, ok := a.runtime.(runtime.PendingMessageCanceler)
+	if !ok {
+		return false
+	}
+	if followUp {
+		return canceler.CancelFollowUp(ctx, msg.ID)
+	}
+	return canceler.CancelSteer(ctx, msg.ID)
+}
+
 // SteerMessage resolves attachments into message parts and queues the result
-// for mid-turn injection into the running agent. The runtime appends the
-// message to the session (and emits the matching UserMessageEvent) when the
-// agent loop drains it.
+// for mid-turn injection into the running agent.
 func (a *App) SteerMessage(ctx context.Context, content string, attachments []messages.Attachment) error {
-	msg := runtime.QueuedMessage{Content: content}
+	_, err := a.QueueSteerMessage(ctx, content, attachments)
+	return err
+}
+
+// QueueSteerMessage is SteerMessage with the queue entry returned for cancellation.
+func (a *App) QueueSteerMessage(ctx context.Context, content string, attachments []messages.Attachment) (runtime.QueuedMessage, error) {
+	msg := runtime.QueuedMessage{ID: uuid.NewString(), Content: content}
 	if len(attachments) > 0 {
 		msg.MultiContent = a.buildUserMultiContent(ctx, a.session, content, attachments)
 	}
-	return a.runtime.Steer(ctx, msg)
+	return msg, a.runtime.Steer(ctx, msg)
 }
 
 // FollowUpMessage resolves attachments and queues a message for a separate turn
 // after the current agent turn finishes.
 func (a *App) FollowUpMessage(ctx context.Context, content string, attachments []messages.Attachment) error {
-	msg := runtime.QueuedMessage{Content: content}
+	_, err := a.QueueFollowUpMessage(ctx, content, attachments)
+	return err
+}
+
+// QueueFollowUpMessage is FollowUpMessage with the queue entry returned for cancellation.
+func (a *App) QueueFollowUpMessage(ctx context.Context, content string, attachments []messages.Attachment) (runtime.QueuedMessage, error) {
+	msg := runtime.QueuedMessage{ID: uuid.NewString(), Content: content}
 	if len(attachments) > 0 {
 		msg.MultiContent = a.buildUserMultiContent(ctx, a.session, content, attachments)
 	}
-	return a.runtime.FollowUp(ctx, msg)
+	return msg, a.runtime.FollowUp(ctx, msg)
 }
 
 // TogglePause toggles whether the runtime loop is paused at iteration

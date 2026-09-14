@@ -481,6 +481,34 @@ func (sm *SessionManager) WaitSessionAttached(ctx context.Context, sessionID str
 	}
 }
 
+// GetActiveSessions returns lightweight status for runtimes attached to this
+// server. Unlike GetSessions, it never reads historical sessions from disk.
+func (sm *SessionManager) GetActiveSessions() []api.SessionsResponse {
+	sessions := []api.SessionsResponse{}
+	sm.runtimeSessions.Range(func(_ string, rs *activeRuntimes) bool {
+		if rs.session == nil {
+			return true
+		}
+		streaming := !rs.streaming.TryLock()
+		if !streaming {
+			rs.streaming.Unlock()
+		}
+		title := rs.session.TitleSnapshot()
+		inputTokens, outputTokens := rs.session.Usage()
+		sessions = append(sessions, api.SessionsResponse{
+			ID:           rs.session.ID,
+			Title:        title,
+			CreatedAt:    rs.session.CreatedAt.Format(time.RFC3339),
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+			WorkingDir:   rs.session.WorkingDir,
+			Streaming:    streaming,
+		})
+		return true
+	})
+	return sessions
+}
+
 // GetSessionStatus returns a lightweight snapshot of the session's current
 // runtime state. Designed for late-joining SSE consumers that need to know
 // the session's state without waiting for the next event transition.

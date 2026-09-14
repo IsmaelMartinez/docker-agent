@@ -1,9 +1,11 @@
 package chat
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/chat"
+	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/tui/animation"
 	tuibanner "github.com/docker/docker-agent/pkg/tui/banner"
 	"github.com/docker/docker-agent/pkg/tui/commands"
@@ -187,8 +190,12 @@ func (p *chatPage) SidebarVisualGeneration() uint64 {
 }
 
 type queuedMessage struct {
-	content     string
-	attachments []msgtypes.Attachment
+	id             string
+	content        string
+	runtimeContent string
+	attachments    []msgtypes.Attachment
+	followUp       bool
+	order          uint64
 }
 
 // maxQueuedMessages is the maximum number of messages that can be queued
@@ -243,7 +250,9 @@ type chatPage struct {
 	hideBanner bool
 
 	// Message queue for enqueuing messages while agent is working
-	messageQueue []queuedMessage
+	messageQueue    []queuedMessage
+	pendingMessages []queuedMessage
+	pendingSequence uint64
 
 	// Editing state for branching sessions
 	editing          bool
@@ -607,6 +616,7 @@ func (p *chatPage) update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		return p.handleSendMsg(msg)
 
 	case steerSentMsg:
+		p.addPendingMessage(msg.pending)
 		return p, notification.InfoCmd("Message sent to the working agent · /settings to queue instead")
 
 	case steerFailedMsg:
@@ -621,6 +631,7 @@ func (p *chatPage) update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		)
 
 	case followUpSentMsg:
+		p.addPendingMessage(msg.pending)
 		return p, notification.InfoCmd("Follow-up queued for the next turn")
 
 	case followUpFailedMsg:
@@ -643,6 +654,9 @@ func (p *chatPage) update(msg tea.Msg) (layout.Model, tea.Cmd) {
 
 	case msgtypes.ClearQueueMsg:
 		return p.handleClearQueue()
+
+	case msgtypes.RestorePendingMessagesMsg:
+		return p, nil
 
 	case generatedMediaResolvedMsg:
 		return p, p.messages.UpdateAssistantMedia(msg.media)
@@ -1053,9 +1067,11 @@ func (p *chatPage) enqueueMessage(msg msgtypes.SendMsg) tea.Cmd {
 	}
 
 	// Add to queue
+	p.pendingSequence++
 	p.messageQueue = append(p.messageQueue, queuedMessage{
 		content:     msg.Content,
 		attachments: msg.Attachments,
+		order:       p.pendingSequence,
 	})
 	p.syncQueueToSidebar()
 
@@ -1069,9 +1085,13 @@ func (p *chatPage) enqueueMessage(msg msgtypes.SendMsg) tea.Cmd {
 // queue; steerFailedMsg carries the message back for local queueing when
 // steering was rejected (e.g. steer queue full).
 type (
-	steerSentMsg      struct{}
-	steerFailedMsg    struct{ original msgtypes.SendMsg }
-	followUpSentMsg   struct{}
+	steerSentMsg struct {
+		pending queuedMessage
+	}
+	steerFailedMsg  struct{ original msgtypes.SendMsg }
+	followUpSentMsg struct {
+		pending queuedMessage
+	}
 	followUpFailedMsg struct{ original msgtypes.SendMsg }
 )
 
@@ -1082,25 +1102,31 @@ type (
 // which is the moment the agent actually sees it.
 func (p *chatPage) steerMessage(msg msgtypes.SendMsg) tea.Cmd {
 	ctx := p.ctx()
+	p.pendingSequence++
+	order := p.pendingSequence
 	return func() tea.Msg {
 		content := p.app.ResolveInput(ctx, msg.Content)
-		if err := p.app.SteerMessage(ctx, content, msg.Attachments); err != nil {
+		queued, err := p.app.QueueSteerMessage(ctx, content, msg.Attachments)
+		if err != nil {
 			slog.Warn("Failed to steer message; falling back to queue", "error", err)
 			return steerFailedMsg{original: msg}
 		}
-		return steerSentMsg{}
+		return steerSentMsg{pending: queuedMessage{id: queued.ID, content: msg.Content, runtimeContent: content, attachments: msg.Attachments, order: order}}
 	}
 }
 
 func (p *chatPage) followUpMessage(msg msgtypes.SendMsg) tea.Cmd {
 	ctx := p.ctx()
+	p.pendingSequence++
+	order := p.pendingSequence
 	return func() tea.Msg {
 		content := p.app.ResolveInput(ctx, msg.Content)
-		if err := p.app.FollowUpMessage(ctx, content, msg.Attachments); err != nil {
+		queued, err := p.app.QueueFollowUpMessage(ctx, content, msg.Attachments)
+		if err != nil {
 			slog.Warn("Failed to enqueue follow-up; falling back to local queue", "error", err)
 			return followUpFailedMsg{original: msg}
 		}
-		return followUpSentMsg{}
+		return followUpSentMsg{pending: queuedMessage{id: queued.ID, content: msg.Content, runtimeContent: content, attachments: msg.Attachments, followUp: true, order: order}}
 	}
 }
 
@@ -1240,6 +1266,58 @@ func (p *chatPage) extractAttachmentsFromSession(position int) []msgtypes.Attach
 	}
 
 	return attachments
+}
+
+func (p *chatPage) addPendingMessage(msg queuedMessage) {
+	if msg.order == 0 {
+		p.pendingSequence++
+		msg.order = p.pendingSequence
+	}
+	p.pendingMessages = append(p.pendingMessages, msg)
+}
+
+func (p *chatPage) consumePendingMessage(content string) {
+	for i, msg := range p.pendingMessages {
+		if msg.runtimeContent != content && msg.runtimeContent != strings.TrimSuffix(content, "\n") {
+			continue
+		}
+		p.pendingMessages = append(p.pendingMessages[:i], p.pendingMessages[i+1:]...)
+		return
+	}
+}
+
+func (p *chatPage) restorePendingMessages() tea.Cmd {
+	pending := append([]queuedMessage(nil), p.pendingMessages...)
+	pending = append(pending, p.messageQueue...)
+	if len(pending) == 0 {
+		return notification.InfoCmd("No pending messages")
+	}
+	slices.SortStableFunc(pending, func(a, b queuedMessage) int { return cmp.Compare(a.order, b.order) })
+
+	restored := make([]string, 0, len(pending))
+	remaining := make([]queuedMessage, 0, len(p.pendingMessages))
+	for _, msg := range pending {
+		if msg.id == "" {
+			restored = append(restored, msg.content)
+			continue
+		}
+		if !p.app.CancelPendingMessage(p.ctx(), runtime.QueuedMessage{ID: msg.id}, msg.followUp) {
+			remaining = append(remaining, msg)
+			continue
+		}
+		restored = append(restored, msg.content)
+	}
+	if len(restored) == 0 {
+		return notification.InfoCmd("No pending messages")
+	}
+
+	p.pendingMessages = remaining
+	p.messageQueue = nil
+	p.syncQueueToSidebar()
+	return tea.Batch(
+		core.CmdHandler(msgtypes.RestorePendingMessagesMsg{Content: strings.Join(restored, "\n")}),
+		core.CmdHandler(msgtypes.RequestFocusMsg{Target: msgtypes.PanelEditor}),
+	)
 }
 
 // processNextQueuedMessage pops the next message from the queue and processes it.

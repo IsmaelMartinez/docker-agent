@@ -59,7 +59,7 @@ settings:
 
 Omit `lean` or set it to `false` to keep the full TUI as the default. You can still use `--lean` for a single run, or `--lean=false` to use the full TUI when `settings.lean` is enabled. See [User Settings](../../configuration/user-settings/index.md) for the full precedence rules between flags and user config.
 
-The lean TUI supports **steering** and **follow-ups** while the agent is running. Press <kbd>Enter</kbd> to steer the active turn, or <kbd>Alt</kbd>+<kbd>Enter</kbd> to queue the message as a separate turn after the current one finishes. Pending messages appear with muted styling at the end of the live stream, labeled `Steering:` or `Follow-up:` so it's clear which turn each one will land on.
+The lean TUI supports **steering** and **follow-ups** while the agent is running. Press <kbd>Enter</kbd> to steer the active turn, or <kbd>Alt</kbd>+<kbd>Enter</kbd> to queue the message as a separate turn after the current one finishes. Pending messages appear with muted styling at the end of the live stream, labeled `Steering:` or `Follow-up:` so it's clear which turn each one will land on. Press <kbd>Alt</kbd>+<kbd>Up</kbd> to withdraw every still-pending steer/follow-up (and any locally queued message) back into the editor, concatenated in the order they were sent, so you can edit and resend them; messages the agent has already picked up are left alone.
 
 The lean TUI supports a focused set of slash commands: `/new`, `/sessions`, `/compact`, `/model`, `/effort`, `/copy`, `/clear`, `/help`, `/exit` (alias: `/quit`), plus any agent-defined commands. Type `/model` (or `/model <provider/model>`) to switch the active model inline — the command opens a fuzzy-searchable list of available models. Type `/sessions` (or `/sessions <session-id>`) to browse and resume past sessions from the current working directory. Type `/copy` to copy the last assistant response to the clipboard.
 
@@ -490,6 +490,7 @@ Customize session titles to make them more meaningful and easier to find. By def
 | Escape     | Cancel current operation                        |
 | Enter      | Send message (or steer while the agent is running) |
 | Alt+Enter  | Queue a follow-up turn while the agent is running |
+| Alt+Up     | Recall all pending (steered/follow-up/queued) messages back into the editor for editing |
 | Shift+Enter | Insert a newline |
 | Up/Down    | Navigate message history                        |
 

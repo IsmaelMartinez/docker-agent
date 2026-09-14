@@ -56,11 +56,9 @@ type loadOptions struct {
 
 type Opt func(*loadOptions) error
 
-// WithWorkingDir overrides the working directory toolsets are built with,
-// without touching the caller's RuntimeConfig. Callers that share one
-// RuntimeConfig across concurrent loads (the API server, one per session)
-// need this to keep each session's shell, filesystem and git tools rooted in
-// that session's directory.
+// WithWorkingDir overrides the working directory toolsets are built with.
+// Callers that share one RuntimeConfig across sessions use it to root each
+// session's shell, filesystem and git tools in that session's directory.
 func WithWorkingDir(dir string) Opt {
 	return func(opts *loadOptions) error {
 		opts.workingDir = dir
@@ -256,13 +254,11 @@ func LoadWithConfig(ctx context.Context, agentSource config.Source, runConfig *c
 		}
 	}
 
-	// Toolsets read runConfig.WorkingDir, and the load below writes the
-	// resolved models, providers and provider registry back onto runConfig.
-	// Callers that load several agents from one RuntimeConfig (the API server
-	// shares a single one across concurrent sessions) must not see those
-	// writes, so take a copy when an explicit working directory is supplied.
-	if loadOpts.workingDir != "" && loadOpts.workingDir != runConfig.WorkingDir {
-		runConfig = runConfig.Clone()
+	// Loading resolves per-load state into RuntimeConfig for toolset creators.
+	// Keep it isolated from the caller so concurrent loads can safely share a
+	// RuntimeConfig.
+	runConfig = runConfig.Clone()
+	if loadOpts.workingDir != "" {
 		runConfig.WorkingDir = loadOpts.workingDir
 	}
 

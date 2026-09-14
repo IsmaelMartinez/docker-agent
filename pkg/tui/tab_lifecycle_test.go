@@ -306,3 +306,24 @@ func TestSettingsAndCleanupSkipUninitializedTabs(t *testing.T) {
 	assert.Nil(t, tab.chatPage)
 	assert.Nil(t, tab.editor)
 }
+
+func TestRestorePendingMessagesUsesActiveTabEditor(t *testing.T) {
+	t.Parallel()
+	m := newTabLifecycleModel(t)
+	firstID := m.supervisor.ActiveID()
+	firstEditor := m.activeTab.editor
+	firstEditor.SetValue("first draft")
+	_, _ = m.handleSpawnSession("/second")
+	secondEditor := m.activeTab.editor
+
+	_, _ = m.Update(messages.RestorePendingMessagesMsg{Content: "second pending message"})
+
+	assert.Equal(t, "second pending message", secondEditor.Value())
+	assert.Equal(t, "first draft", firstEditor.Value())
+
+	_, _ = m.handleSwitchTab(firstID)
+	_, _ = m.Update(messages.RestorePendingMessagesMsg{Content: "first pending message"})
+
+	assert.Equal(t, "first pending message", firstEditor.Value())
+	assert.Equal(t, "second pending message", secondEditor.Value())
+}

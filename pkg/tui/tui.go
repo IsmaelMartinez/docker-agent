@@ -1189,6 +1189,10 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// --- SendMsg from editor ---
 
+	case messages.RestorePendingMessagesMsg:
+		m.activeTab.editor.SetValue(msg.Content)
+		return m, m.activeTab.editor.Focus()
+
 	case messages.SendMsg:
 		// Forward send messages to the active content view
 		if m.history != nil && !msg.BypassQueue {

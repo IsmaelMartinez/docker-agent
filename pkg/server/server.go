@@ -257,6 +257,10 @@ func agentSourceHTTPError(operation string, err error) error {
 }
 
 func (s *Server) getSessions(c echo.Context) error {
+	if c.QueryParam("active") == "true" {
+		return c.JSON(http.StatusOK, s.sm.GetActiveSessions())
+	}
+
 	sessions, err := s.sm.GetSessions(c.Request().Context())
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to get sessions: %v", err))

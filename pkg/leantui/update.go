@@ -10,6 +10,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
+	"github.com/google/uuid"
 
 	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/effort"
@@ -48,6 +49,8 @@ func (m *model) handleKey(ctx context.Context, k ui.Key) {
 		m.screen.Editor.Insert([]rune{'\n'})
 	case ui.KeyAltEnter:
 		m.submitEditorMode(ctx, m.screen.Editor.Text(), busySubmitFollowUp)
+	case ui.KeyAltUp:
+		m.cancelPendingMessages(ctx)
 	case ui.KeyTab:
 		m.handleTab()
 	case ui.KeyShiftTab:
@@ -99,6 +102,31 @@ func (m *model) handleKey(ctx context.Context, k ui.Key) {
 	}
 
 	m.screen.Autocomplete.Sync(m.screen.Editor.Text())
+}
+
+func (m *model) cancelPendingMessages(ctx context.Context) bool {
+	if m.app == nil || len(m.pendingUsers) == 0 {
+		return false
+	}
+
+	cancelled := make([]string, 0, len(m.pendingUsers))
+	remaining := make([]ui.PendingUserMessage, 0, len(m.pendingUsers))
+	for _, pending := range m.pendingUsers {
+		followUp := pending.Kind == ui.PendingUserFollowUp
+		if pending.ID == "" || !m.app.CancelPendingMessage(ctx, runtime.QueuedMessage{ID: pending.ID}, followUp) {
+			remaining = append(remaining, pending)
+			continue
+		}
+		cancelled = append(cancelled, pending.Display)
+	}
+	if len(cancelled) == 0 {
+		return false
+	}
+
+	m.pendingUsers = remaining
+	m.screen.Editor.SetText(strings.Join(cancelled, "\n"))
+	m.screen.Autocomplete.Sync(m.screen.Editor.Text())
+	return true
 }
 
 func (m *model) handleInterrupt() {
@@ -551,18 +579,20 @@ func (m *model) dispatchUserMessage(ctx context.Context, display, content string
 	if m.busy {
 		switch mode {
 		case busySubmitSteer:
-			if err := m.app.Steer(ctx, runtime.QueuedMessage{Content: content}); err != nil {
+			msg := runtime.QueuedMessage{ID: uuid.NewString(), Content: content}
+			if err := m.app.Steer(ctx, msg); err != nil {
 				m.addNotice("⚠ ", "Could not steer current response: "+err.Error(), ui.StWarning())
 				return
 			}
-			m.addPendingUser(display, content, ui.PendingUserSteer)
+			m.addPendingUser(msg.ID, display, content, ui.PendingUserSteer)
 			return
 		case busySubmitFollowUp:
-			if err := m.app.FollowUp(ctx, runtime.QueuedMessage{Content: content}); err != nil {
+			msg := runtime.QueuedMessage{ID: uuid.NewString(), Content: content}
+			if err := m.app.FollowUp(ctx, msg); err != nil {
 				m.addNotice("⚠ ", "Could not enqueue follow-up: "+err.Error(), ui.StWarning())
 				return
 			}
-			m.addPendingUser(display, content, ui.PendingUserFollowUp)
+			m.addPendingUser(msg.ID, display, content, ui.PendingUserFollowUp)
 			return
 		default:
 			m.enqueueFollowUp(display, content)
@@ -722,8 +752,8 @@ func (m *model) addUserEcho(text string) {
 	m.screen.Transcript.AddBlock(func(w int) []string { return ui.RenderUserLines(text, w) })
 }
 
-func (m *model) addPendingUser(display, content string, kind ui.PendingUserKind) {
-	m.pendingUsers = append(m.pendingUsers, ui.PendingUserMessage{Display: display, Content: content, Kind: kind})
+func (m *model) addPendingUser(id, display, content string, kind ui.PendingUserKind) {
+	m.pendingUsers = append(m.pendingUsers, ui.PendingUserMessage{ID: id, Display: display, Content: content, Kind: kind})
 }
 
 func (m *model) consumePendingUser(kind ui.PendingUserKind, content string) (ui.PendingUserMessage, bool) {
@@ -778,6 +808,7 @@ func (m *model) commitHelp() {
 			ui.StMuted().Render("  Enter      send             Shift+Enter insert newline"),
 			ui.StMuted().Render("  Alt+Enter  follow up        Up/Down     history"),
 			ui.StMuted().Render("  Tab        complete command Shift+Tab   cycle thinking"),
+			ui.StMuted().Render("  Option+Up  edit all pending messages"),
 			ui.StMuted().Render("  Esc        interrupt         Ctrl+C     cancel / quit"),
 			ui.StMuted().Render("  Ctrl+W     delete previous word"),
 		}

@@ -113,6 +113,26 @@ func (r *cycleThinkingRuntime) FollowUp(_ context.Context, msg runtime.QueuedMes
 	r.followUps = append(r.followUps, msg)
 	return nil
 }
+
+func (r *cycleThinkingRuntime) CancelSteer(_ context.Context, id string) bool {
+	for i, msg := range r.steered {
+		if msg.ID == id {
+			r.steered = append(r.steered[:i], r.steered[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func (r *cycleThinkingRuntime) CancelFollowUp(_ context.Context, id string) bool {
+	for i, msg := range r.followUps {
+		if msg.ID == id {
+			r.followUps = append(r.followUps[:i], r.followUps[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
 func (r *cycleThinkingRuntime) QueueStatus() runtime.QueueStatus { return runtime.QueueStatus{} }
 
 func (r *cycleThinkingRuntime) TogglePause(context.Context) (bool, error) {
@@ -510,6 +530,82 @@ func TestAltEnterWhileBusyQueuesRuntimeFollowUp(t *testing.T) {
 	assert.True(t, m.screen.Editor.IsEmpty())
 }
 
+func TestOptionUpCancelsPendingSteerAndRestoresEditor(t *testing.T) {
+	t.Parallel()
+	rt := &cycleThinkingRuntime{}
+	m := bareModel(24)
+	m.app = app.New(t.Context(), rt, session.New())
+	m.busy = true
+	m.screen.Editor.SetText("turn left")
+	m.handleEnter(t.Context())
+
+	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyAltUp})
+
+	assert.Empty(t, rt.steered)
+	assert.Empty(t, m.pendingUsers)
+	assert.Equal(t, "turn left", m.screen.Editor.Text())
+	assert.True(t, m.busy)
+}
+
+func TestOptionUpCancelsPendingFollowUpAndRestoresEditor(t *testing.T) {
+	t.Parallel()
+	rt := &cycleThinkingRuntime{}
+	m := bareModel(24)
+	m.app = app.New(t.Context(), rt, session.New())
+	m.busy = true
+	m.screen.Editor.SetText("do this next")
+	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyAltEnter})
+
+	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyAltUp})
+
+	assert.Empty(t, rt.followUps)
+	assert.Empty(t, m.pendingUsers)
+	assert.Equal(t, "do this next", m.screen.Editor.Text())
+	assert.True(t, m.busy)
+}
+
+func TestOptionUpCancelsAllPendingMessagesAndConcatenatesThem(t *testing.T) {
+	t.Parallel()
+	rt := &cycleThinkingRuntime{}
+	m := bareModel(24)
+	m.app = app.New(t.Context(), rt, session.New())
+	m.busy = true
+
+	m.screen.Editor.SetText("first steer")
+	m.handleEnter(t.Context())
+	m.screen.Editor.SetText("then follow up")
+	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyAltEnter})
+	m.screen.Editor.SetText("second steer")
+	m.handleEnter(t.Context())
+
+	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyAltUp})
+
+	assert.Empty(t, rt.steered)
+	assert.Empty(t, rt.followUps)
+	assert.Empty(t, m.pendingUsers)
+	assert.Equal(t, "first steer\nthen follow up\nsecond steer", m.screen.Editor.Text())
+	assert.True(t, m.busy)
+}
+
+func TestOptionUpRestoresOnlyMessagesStillCancelable(t *testing.T) {
+	t.Parallel()
+	rt := &cycleThinkingRuntime{}
+	m := bareModel(24)
+	m.app = app.New(t.Context(), rt, session.New())
+	m.busy = true
+	m.pendingUsers = []ui.PendingUserMessage{
+		{ID: "consumed", Display: "already sent", Kind: ui.PendingUserSteer},
+		{ID: "pending", Display: "still pending", Kind: ui.PendingUserFollowUp},
+	}
+	rt.followUps = []runtime.QueuedMessage{{ID: "pending", Content: "still pending"}}
+
+	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyAltUp})
+
+	assert.Empty(t, rt.followUps)
+	assert.Equal(t, "still pending", m.screen.Editor.Text())
+	assert.Equal(t, []ui.PendingUserMessage{{ID: "consumed", Display: "already sent", Kind: ui.PendingUserSteer}}, m.pendingUsers)
+}
+
 func TestEditorSubmitWhileBusySteersAndRendersAtStreamEnd(t *testing.T) {
 	t.Parallel()
 	rt := &cycleThinkingRuntime{}
@@ -541,7 +637,7 @@ func TestSteeredUserEventConfirmsPendingAfterAssistant(t *testing.T) {
 	m := bareModel(24)
 	m.busy = true
 	m.screen.Transcript.AppendAssistant("assistant response")
-	m.addPendingUser("/change", "resolved steering prompt", ui.PendingUserSteer)
+	m.addPendingUser("", "/change", "resolved steering prompt", ui.PendingUserSteer)
 
 	m.handleEvent(t.Context(), runtime.UserMessage("resolved steering prompt\n", "session", nil, 1))
 

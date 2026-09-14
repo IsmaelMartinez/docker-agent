@@ -27,9 +27,9 @@ type RuntimeConfig struct {
 	modelsDevStoreOnce     sync.Once
 
 	// ProviderRegistry instantiates model providers for toolsets that build
-	// providers at load time (e.g. RAG embeddings/reranking). It is populated
-	// by the team loader with the same registry used for agent models. When
-	// nil, ProviderRegistryOrDefault falls back to provider.DefaultRegistry.
+	// providers at load time (e.g. RAG embeddings/reranking). The team loader
+	// sets it on its per-load clone with the registry used for agent models.
+	// When nil, ProviderRegistryOrDefault falls back to provider.DefaultRegistry.
 	ProviderRegistry *provider.Registry
 }
 

@@ -16,6 +16,7 @@ const (
 	KeyEnter
 	KeyShiftEnter // insert a literal newline (multi-line input)
 	KeyAltEnter   // submit an end-of-turn follow-up
+	KeyAltUp      // edit the newest pending steer or follow-up
 	KeyTab
 	KeyShiftTab
 	KeyBackspace
@@ -226,6 +227,9 @@ func parseCSI(b []byte) (int, Key) {
 
 	switch final {
 	case 'A':
+		if modifier() == "3" {
+			return consumed, Key{Typ: KeyAltUp}
+		}
 		return consumed, Key{Typ: KeyUp}
 	case 'B':
 		return consumed, Key{Typ: KeyDown}
