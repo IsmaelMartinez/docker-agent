@@ -579,7 +579,7 @@ func (rt *wasmRuntime) processToolCalls(ctx context.Context, calls []tools.ToolC
 		// Handle built-in delegation tools.
 		switch tc.Function.Name {
 		case "transfer_task":
-			result, target := rt.handleTransferTask(tc)
+			result, target := rt.handleTransferTask(ctx, tc)
 			resultMessages = append(resultMessages, chat.Message{
 				Role:       chat.MessageRoleTool,
 				ToolCallID: tc.ID,
@@ -590,7 +590,7 @@ func (rt *wasmRuntime) processToolCalls(ctx context.Context, calls []tools.ToolC
 			}
 			continue
 		case "handoff":
-			result, target := rt.handleHandoff(tc)
+			result, target := rt.handleHandoff(ctx, tc)
 			resultMessages = append(resultMessages, chat.Message{
 				Role:       chat.MessageRoleTool,
 				ToolCallID: tc.ID,
@@ -714,13 +714,13 @@ func (rt *wasmRuntime) addDelegationTools(a *agent.Agent, existingTools []tools.
 }
 
 // handleTransferTask processes the transfer_task tool call.
-func (rt *wasmRuntime) handleTransferTask(tc tools.ToolCall) (string, string) {
+func (rt *wasmRuntime) handleTransferTask(ctx context.Context, tc tools.ToolCall) (string, string) {
 	var params struct {
 		Agent          string `json:"agent"`
 		Task           string `json:"task"`
 		ExpectedOutput string `json:"expected_output"`
 	}
-	if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
+	if err := tools.UnmarshalToolArguments(ctx, tc, &params); err != nil {
 		return fmt.Sprintf("Invalid arguments: %v", err), ""
 	}
 
@@ -732,11 +732,11 @@ func (rt *wasmRuntime) handleTransferTask(tc tools.ToolCall) (string, string) {
 }
 
 // handleHandoff processes the handoff tool call.
-func (rt *wasmRuntime) handleHandoff(tc tools.ToolCall) (string, string) {
+func (rt *wasmRuntime) handleHandoff(ctx context.Context, tc tools.ToolCall) (string, string) {
 	var params struct {
 		Agent string `json:"agent"`
 	}
-	if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
+	if err := tools.UnmarshalToolArguments(ctx, tc, &params); err != nil {
 		return fmt.Sprintf("Invalid arguments: %v", err), ""
 	}
 

@@ -2,7 +2,6 @@ package lsp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -155,7 +154,7 @@ func routeByFile(handlers []lspRouteTarget) tools.ToolHandler {
 		var args struct {
 			File string `json:"file"`
 		}
-		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+		if err := tools.UnmarshalToolArguments(ctx, tc, &args); err != nil {
 			return tools.ResultError(fmt.Sprintf("failed to parse file argument: %s", err)), nil
 		}
 		if args.File == "" {

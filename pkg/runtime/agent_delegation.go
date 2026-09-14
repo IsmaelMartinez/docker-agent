@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -687,7 +686,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 		Task           string `json:"task"`
 		ExpectedOutput string `json:"expected_output"`
 	}
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
+	if err := tools.UnmarshalToolArguments(ctx, toolCall, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 
@@ -758,7 +757,7 @@ func (r *LocalRuntime) handleTaskTransfer(ctx context.Context, sess *session.Ses
 
 func (r *LocalRuntime) handleHandoff(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, _ EventSink, _ tools.Runtime) (*tools.ToolCallResult, error) {
 	var params handoff.Args
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
+	if err := tools.UnmarshalToolArguments(ctx, toolCall, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 

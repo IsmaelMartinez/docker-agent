@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -734,7 +733,7 @@ func (ts *Toolset) callTool(ctx context.Context, toolCall tools.ToolCall, _ tool
 
 	toolCall.Function.Arguments = cmp.Or(toolCall.Function.Arguments, "{}")
 	var args map[string]any
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
+	if err := tools.UnmarshalToolArguments(ctx, toolCall, &args); err != nil {
 		slog.ErrorContext(ctx, "Failed to parse tool arguments", "tool", toolCall.Function.Name, "error", err)
 		return nil, fmt.Errorf("failed to parse tool arguments: %w", err)
 	}

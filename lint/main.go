@@ -33,6 +33,7 @@ var cops = []cop.Cop{
 	HookBuiltinsRegistered,
 	HookBuiltinsDocumented,
 	SlogContextual,
+	ToolArgumentsViaAIJSON,
 	ConstructorPurity,
 	ConstructorCommandExec,
 	ConstructorNetworkIO,
