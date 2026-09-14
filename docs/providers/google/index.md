@@ -10,7 +10,7 @@ _Use Gemini 2.5 Flash, Gemini 3.1 Pro, and other Google models with Docker Agent
 
 ## Setup
 
-Docker Agent reads the first credential it finds from these environment variables (see `pkg/model/provider/gemini/client.go`):
+Docker Agent reads the first credential it finds from these environment variables (see `pkg/model/provider/gemini/client.go`), unless the model or its [custom provider](../custom/index.md) sets `token_key`, in which case that variable is used instead:
 
 | Variable                    | Purpose                                                                             |
 | --------------------------- | ----------------------------------------------------------------------------------- |
