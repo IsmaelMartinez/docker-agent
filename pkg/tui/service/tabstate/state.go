@@ -8,10 +8,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/docker/docker-agent/pkg/runtime"
+	"github.com/docker/docker-agent/pkg/tui/messages"
 )
 
-// State is shared with the supervisor, which applies events before routing them to the UI.
-// Its methods are safe to call from either the subscription or the UI goroutine.
+// State is updated by the TUI event loop and read by supervisor snapshots.
+// Its methods are safe for concurrent snapshot readers.
 type State struct {
 	mu             sync.Mutex
 	sessionID      string
@@ -81,7 +82,7 @@ func (s *State) Consume() tea.Msg {
 	return event
 }
 
-// Apply updates status at event arrival. The caller supplies visibility under its routing lock.
+// Apply updates status on delivery in the TUI event loop.
 func (s *State) Apply(msg tea.Msg, active bool) (changed, bell bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -98,15 +99,17 @@ func (s *State) Apply(msg tea.Msg, active bool) (changed, bell bool) {
 		}
 		s.running = false
 		s.retainDetachedElicitations()
+	case messages.StreamCancelledMsg:
+		s.running = false
+		s.retainDetachedElicitations()
 	case *runtime.SessionTitleEvent:
 		s.title = ev.Title
 	case *runtime.ToolCallConfirmationEvent, *runtime.MaxIterationsReachedEvent, *runtime.ElicitationRequestEvent:
-		if active {
-			return false, false
-		}
 		s.pending = append(s.pending, msg)
-		s.needsAttention = true
-		return true, true
+		if !active {
+			s.needsAttention = true
+		}
+		return true, !active
 	default:
 		return false, false
 	}
@@ -116,8 +119,7 @@ func (s *State) Apply(msg tea.Msg, active bool) (changed, bell bool) {
 // Detached jobs outlive the foreground turn; their unanswered prompts remain live.
 func (s *State) retainDetachedElicitations() {
 	s.pending = slices.DeleteFunc(s.pending, func(msg tea.Msg) bool {
-		ev, ok := msg.(*runtime.ElicitationRequestEvent)
-		return !ok || isTopLevelStream(s.sessionID, ev.SessionID)
+		return !isDetachedElicitation(s.sessionID, msg)
 	})
 	s.needsAttention = len(s.pending) > 0
 }
@@ -125,4 +127,37 @@ func (s *State) retainDetachedElicitations() {
 // Older emitters omit the session ID for top-level events.
 func isTopLevelStream(sessionID, eventSessionID string) bool {
 	return eventSessionID == "" || eventSessionID == sessionID
+}
+
+// ClearAttention retires prompts even when reloading the same conversation.
+func (s *State) ClearAttention() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pending = nil
+	s.needsAttention = false
+}
+
+// RetiresAttention applies the same boundary policy to parked and open dialogs.
+func (s *State) RetiresAttention(boundary, event tea.Msg) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch msg := boundary.(type) {
+	case *runtime.StreamStartedEvent:
+		if !isTopLevelStream(s.sessionID, msg.SessionID) {
+			return false
+		}
+	case *runtime.StreamStoppedEvent:
+		if !isTopLevelStream(s.sessionID, msg.SessionID) {
+			return false
+		}
+	case messages.StreamCancelledMsg:
+	default:
+		return false
+	}
+	return !isDetachedElicitation(s.sessionID, event)
+}
+
+func isDetachedElicitation(sessionID string, msg tea.Msg) bool {
+	ev, ok := msg.(*runtime.ElicitationRequestEvent)
+	return ok && !isTopLevelStream(sessionID, ev.SessionID)
 }

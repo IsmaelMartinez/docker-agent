@@ -680,6 +680,7 @@ func (m *appModel) editorOpts() []editor.Option {
 func (m *appModel) initSessionComponents(tabID string, a *app.App, sess *session.Session) {
 	tab := m.ensureTab(tabID)
 	if tab.chatPage != nil {
+		m.retireAttention(tab)
 		chat.Cleanup(tab.chatPage)
 	}
 	ss := service.NewSessionState(sess)
@@ -817,7 +818,11 @@ func (m *appModel) init() tea.Cmd {
 // observe every message that flows through the TUI (to detect completed
 // steps) without ever consuming it.
 func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	stateCmd := m.applyTabEvent(m.activeTab, msg)
 	model, cmd := m.update(msg)
+	if isTabStateEvent(msg) && m.supervisor != nil {
+		cmd = tea.Batch(cmd, stateCmd, m.replayPendingEvent(m.supervisor.ActiveID()))
+	}
 	if obs := m.tour.Observe(msg); obs != nil {
 		cmd = tea.Batch(cmd, obs)
 	}
@@ -921,14 +926,9 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// --- Tab management ---
 
 	case messages.TabsUpdatedMsg:
-		prevHeight := m.tabBar.Height()
-		m.tabBar.SetTabs(msg.Tabs, msg.ActiveIdx)
-		m.statusBar.SetShowNewTab(m.tabBar.Height() == 0)
-		if m.tabBar.Height() != prevHeight {
-			cmd := m.resizeAll()
-			return m, cmd
-		}
-		return m, nil
+		// Subscription and lifecycle notifications may arrive out of order.
+		cmd := m.refreshTabs()
+		return m, cmd
 
 	case messages.SpawnSessionMsg:
 		return m.handleSpawnSession(msg.WorkingDir)
@@ -1525,6 +1525,10 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleRoutedMsg processes messages routed to specific sessions.
 func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) {
+	runner := m.supervisor.GetRunner(msg.SessionID)
+	if msg.Scope != nil && (runner == nil || runner.Scope != msg.Scope) {
+		return m, nil
+	}
 	activeID := m.supervisor.ActiveID()
 
 	if msg.SessionID == activeID {
@@ -1535,8 +1539,12 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 	// Background session: update its chat page directly so streaming content accumulates.
 	// Only tab-local work and global effects are dispatched for hidden pages.
 	tab := m.tabs[msg.SessionID]
+	if tab == nil && runner != nil {
+		tab = m.ensureTab(msg.SessionID)
+	}
+	stateCmd := m.applyTabEvent(tab, msg.Inner)
 	if tab == nil || tab.chatPage == nil {
-		return m, nil
+		return m, stateCmd
 	}
 
 	// Update session state for inactive sessions
@@ -1561,7 +1569,7 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 	if _, isPlanChange := msg.Inner.(*runtime.PlanChangedEvent); isPlanChange && m.planDialogOpen() {
 		effects.Global = tea.Batch(effects.Global, m.planRefreshCmd(false))
 	}
-	return m, effects.Cmd(false)
+	return m, tea.Batch(stateCmd, effects.Cmd(false))
 }
 
 // applyPauseEvent advances a session's pause indicator in response to runtime
@@ -1701,6 +1709,7 @@ func (m *appModel) handleLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 	model, switchCmd := m.handleSwitchTab(newSessionID)
 
 	// Replace the blank session with the loaded one and rebuild all components.
+	m.preparePageReplacement(newSessionID)
 	m.bindTabSession(newSessionID, sess.ID)
 	m.application.ReplaceSession(ctx, sess)
 	m.initSessionComponents(newSessionID, m.application, sess)
@@ -1722,6 +1731,7 @@ func (m *appModel) handleLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 // a fresh runtime is spawned via the supervisor so that tools operate in the correct directory.
 func (m *appModel) replaceActiveSession(ctx context.Context, sess *session.Session) (tea.Model, tea.Cmd) {
 	activeID := m.supervisor.ActiveID()
+	m.preparePageReplacement(activeID)
 	m.bindTabSession(activeID, sess.ID)
 
 	slog.DebugContext(ctx, "Replacing empty session in-place", "tab_id", activeID, "loaded_session", sess.ID)
@@ -1774,6 +1784,7 @@ func (m *appModel) handleClearSession() (tea.Model, tea.Cmd) {
 	}
 
 	// Create a fresh session in the same app, preserving the working dir.
+	m.preparePageReplacement(activeID)
 	m.application.NewSession()
 	newSess := m.application.Session()
 	m.bindTabSession(activeID, newSess.ID)
@@ -1903,58 +1914,17 @@ func (m *appModel) openWorkingDirPicker() (tea.Model, tea.Cmd) {
 	})
 }
 
-// stashedDialog holds a background dialog instance that was on screen when
-// the user navigated away from a tab, paired with the runtime event that
-// caused it to open. The event is used as an identity check on return: if
-// the tab's pending event no longer matches, the agent
-// has superseded the prompt and we discard the stash in favour of building
-// a fresh dialog from the new event.
-type stashedDialog struct {
-	dialog dialog.Dialog
-	event  tea.Msg
-}
-
 // handleSwitchTab switches to a different session.
 // Existing chat pages and editors are preserved (not recreated) so that in-flight streaming
 // content and draft text are retained when switching back to a tab.
 func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
-	// If a background dialog (e.g. pending elicitation) is open on the
-	// outgoing tab, capture both its originating event and the live dialog
-	// instance before the supervisor flips activeID. We only commit the
-	// re-stash after SwitchTo succeeds — otherwise a failed switch would
-	// leave the supervisor with a stale pending event and the dialog still
-	// on screen.
-	//
-	// Stashing the dialog instance (rather than rebuilding it from the event
-	// on return) preserves any in-progress input the user typed — e.g. text
-	// already entered into a user_prompt elicitation. See issue #2770.
-	var (
-		backgroundEvent  tea.Msg
-		backgroundDialog dialog.Dialog
-		outgoingTabID    string
-	)
-	if m.dialogMgr.Open() && m.dialogMgr.TopIsBackground() {
-		backgroundEvent = m.dialogMgr.TopBackgroundEvent()
-		backgroundDialog = m.dialogMgr.TopDialog()
-		outgoingTabID = m.supervisor.ActiveID()
-	}
-
+	outgoing := m.activeTab
 	runner := m.supervisor.SwitchTo(sessionID)
 	if runner == nil {
 		return m, notification.ErrorCmd("Session not found")
 	}
-
-	// Now that the switch is committed, finalize the dialog hand-off.
-	var closeBackgroundDialogCmd tea.Cmd
-	if backgroundEvent != nil && outgoingTabID != "" && outgoingTabID != sessionID {
-		m.ensureTab(outgoingTabID).state.Prepend(backgroundEvent)
-		if backgroundDialog != nil {
-			m.ensureTab(outgoingTabID).stashedDialog = &stashedDialog{
-				dialog: backgroundDialog,
-				event:  backgroundEvent,
-			}
-		}
-		closeBackgroundDialogCmd = core.CmdHandler(dialog.CloseDialogMsg{})
+	if outgoing != m.tabs[sessionID] {
+		m.parkAttention(outgoing)
 	}
 
 	// Blur current editor before switching
@@ -1978,7 +1948,7 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 					}
 				}
 
-				cmd = tea.Batch(cmd, m.applySidebarCollapsed(sessionID), closeBackgroundDialogCmd)
+				cmd = tea.Batch(cmd, m.applySidebarCollapsed(sessionID))
 				return model, cmd
 			}
 		}
@@ -2026,9 +1996,6 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	if pendingCmd := m.replayPendingEvent(sessionID); pendingCmd != nil {
 		cmds = append(cmds, pendingCmd)
 	}
-	if closeBackgroundDialogCmd != nil {
-		cmds = append(cmds, closeBackgroundDialogCmd)
-	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -2043,129 +2010,6 @@ func (m *appModel) applySidebarCollapsed(sessionID string) tea.Cmd {
 	m.activeTab.chatPage.SetSidebarSettings(chat.SidebarSettings{Collapsed: *tab.pendingSidebarCollapsed})
 	tab.pendingSidebarCollapsed = nil
 	return m.resizeAll()
-}
-
-// replayPendingEvent checks if a session has pending attention events (e.g.
-// tool confirmation, max iterations, elicitation) that were received while
-// the tab was inactive. Every queued event is replayed, in arrival order, so
-// concurrent attention events (e.g. two background-job elicitations) all
-// reopen as stacked dialogs instead of only the most recent one (#3584). Each
-// event was already processed by the chat page (updating the message list),
-// but the dialog command was discarded for inactive sessions.
-//
-// If a stashed dialog instance is available for this session and its
-// associated event still matches the first pending one, the same instance is
-// re-opened so any in-progress input survives the round trip (issue #2770).
-// Otherwise the stash is discarded and a fresh dialog is built.
-func (m *appModel) replayPendingEvent(sessionID string) tea.Cmd {
-	tab := m.tabs[sessionID]
-	if tab == nil {
-		return nil
-	}
-	if tab.sessionState == nil || tab.state == nil {
-		tab.stashedDialog = nil
-		return nil
-	}
-
-	var cmds []tea.Cmd
-	for first := true; ; first = false {
-		pendingEvent := tab.state.Consume()
-		if pendingEvent == nil {
-			if first {
-				// No pending event at all: any stash is stale (e.g. the agent finished).
-				tab.stashedDialog = nil
-			}
-			break
-		}
-
-		// Only the first (oldest) event can match a stashed live dialog
-		// instance: the stash holds exactly the one dialog that was on
-		// screen when the user left the tab.
-		if first {
-			if stash := tab.stashedDialog; stash != nil {
-				tab.stashedDialog = nil
-				if stash.event == pendingEvent && stash.dialog != nil {
-					cmds = append(cmds, core.CmdHandler(dialog.OpenDialogMsg{
-						Model:            stash.dialog,
-						OriginatingEvent: pendingEvent,
-					}))
-					continue
-				}
-			}
-		}
-
-		if cmd := m.dialogCmdForPendingEvent(pendingEvent, tab.sessionState); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	}
-
-	if len(cmds) == 0 {
-		return nil
-	}
-	// tea.Sequence (not tea.Batch) is required for deterministic ordering:
-	// tea.Batch runs commands concurrently with no ordering guarantee on
-	// which resulting Msg reaches Update first, so two concurrent attention
-	// events (e.g. two background-job elicitations queued while this tab was
-	// inactive) could stack in a random order on every replay even though
-	// they were popped off the FIFO queue above in arrival order (#3584
-	// should-fix: FIFO replay). tea.Sequence guarantees each OpenDialogMsg is
-	// delivered to Update in the order the commands were built, so the
-	// dialog stack's bottom-to-top order matches arrival order every time.
-	return tea.Sequence(cmds...)
-}
-
-// dialogCmdForPendingEvent builds the OpenDialogMsg command for a single
-// replayed attention event. Shared by every event replayPendingEvent pops off
-// the queue after the first (stash-eligible) one.
-func (m *appModel) dialogCmdForPendingEvent(pendingEvent tea.Msg, sessionState *service.SessionState) tea.Cmd {
-	switch ev := pendingEvent.(type) {
-	case *runtime.ToolCallConfirmationEvent:
-		return core.CmdHandler(dialog.OpenDialogMsg{
-			Model:            dialog.NewToolConfirmationDialog(m.ar, ev, sessionState),
-			OriginatingEvent: ev,
-		})
-
-	case *runtime.MaxIterationsReachedEvent:
-		return core.CmdHandler(dialog.OpenDialogMsg{
-			Model:            dialog.NewMaxIterationsDialog(ev.MaxIterations, m.application),
-			OriginatingEvent: ev,
-		})
-
-	case *runtime.ElicitationRequestEvent:
-		return m.replayElicitationEvent(ev)
-	}
-
-	return nil
-}
-
-// replayElicitationEvent opens the appropriate elicitation dialog for a pending event.
-func (m *appModel) replayElicitationEvent(ev *runtime.ElicitationRequestEvent) tea.Cmd {
-	// Check if this is an OAuth flow
-	if ev.Meta != nil {
-		if elicitationType, ok := ev.Meta["docker-agent/type"].(string); ok && elicitationType == "oauth_flow" {
-			var serverURL string
-			if url, ok := ev.Meta["docker-agent/server_url"].(string); ok {
-				serverURL = url
-			}
-			return core.CmdHandler(dialog.OpenDialogMsg{
-				Model:            dialog.NewOAuthAuthorizationDialog(m.ctx(), serverURL, m.application, ev.ElicitationID),
-				OriginatingEvent: ev,
-			})
-		}
-	}
-
-	switch ev.Mode {
-	case "url":
-		return core.CmdHandler(dialog.OpenDialogMsg{
-			Model:            dialog.NewURLElicitationDialog(m.ctx(), ev.Message, ev.URL, ev.ElicitationID),
-			OriginatingEvent: ev,
-		})
-	default:
-		return core.CmdHandler(dialog.OpenDialogMsg{
-			Model:            dialog.NewElicitationDialog(ev.Message, ev.Schema, ev.Meta, ev.ElicitationID),
-			OriginatingEvent: ev,
-		})
-	}
 }
 
 // handleReorderTab moves a tab from one position to another.
@@ -2197,6 +2041,9 @@ func (m *appModel) handleCloseTab(sessionID string) (tea.Model, tea.Cmd) {
 	// Compute persisted session-store ID *before* closing (runner goes away).
 	persistedID := m.persistedSessionID(sessionID)
 
+	if wasActive {
+		m.retireAttention(m.activeTab)
+	}
 	nextActiveID := m.supervisor.CloseSession(sessionID)
 
 	// Clean up per-session state

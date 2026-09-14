@@ -33,7 +33,7 @@ func TestAttentionQueue(t *testing.T) {
 	assert.Nil(t, state.Consume())
 }
 
-func TestActiveAttentionIsNotQueued(t *testing.T) {
+func TestActiveAttentionUsesSameQueueWithoutBell(t *testing.T) {
 	t.Parallel()
 	for _, event := range []tea.Msg{
 		&runtime.ToolCallConfirmationEvent{},
@@ -42,9 +42,9 @@ func TestActiveAttentionIsNotQueued(t *testing.T) {
 	} {
 		state := New("tab", "")
 		changed, bell := state.Apply(event, true)
-		assert.False(t, changed)
+		assert.True(t, changed)
 		assert.False(t, bell)
-		assert.Nil(t, state.Consume())
+		assert.Same(t, event, state.Consume())
 		_, _, attention := state.Snapshot()
 		assert.False(t, attention)
 	}
