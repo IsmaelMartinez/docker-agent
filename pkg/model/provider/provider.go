@@ -11,61 +11,23 @@ package provider
 import (
 	"context"
 
-	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
-	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/model/provider/contracts"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
-	"github.com/docker/docker-agent/pkg/modelsdev"
-	"github.com/docker/docker-agent/pkg/rag/types"
-	"github.com/docker/docker-agent/pkg/tools"
 )
 
-// Provider defines the interface for model providers.
-type Provider interface {
-	// ID returns the provider-qualified model identity. Returning a
-	// [modelsdev.ID] (rather than a bare string) prevents callers from
-	// silently forgetting to namespace the model when it crosses an API
-	// boundary; use [modelsdev.ID.String] when a textual representation
-	// is required.
-	ID() modelsdev.ID
-	// CreateChatCompletionStream creates a streaming chat completion request.
-	// It returns a stream that can be iterated over to get completion chunks.
-	CreateChatCompletionStream(
-		ctx context.Context,
-		messages []chat.Message,
-		tools []tools.Tool,
-	) (chat.MessageStream, error)
-	// BaseConfig returns the base configuration of this provider.
-	BaseConfig() base.Config
-}
+// Provider is the common interface implemented by model providers.
+type Provider = contracts.Provider
 
-// EmbeddingProvider defines the interface for providers that support embeddings.
-type EmbeddingProvider interface {
-	Provider
-	// CreateEmbedding generates an embedding vector for the given text with usage tracking.
-	CreateEmbedding(ctx context.Context, text string) (*base.EmbeddingResult, error)
-}
+// EmbeddingProvider is a provider that supports embeddings.
+type EmbeddingProvider = contracts.EmbeddingProvider
 
-// BatchEmbeddingProvider defines the interface for providers that support batch embeddings.
-type BatchEmbeddingProvider interface {
-	EmbeddingProvider
-	// CreateBatchEmbedding generates embedding vectors for multiple texts with usage tracking.
-	// Returns embeddings in the same order as input texts.
-	CreateBatchEmbedding(ctx context.Context, texts []string) (*base.BatchEmbeddingResult, error)
-}
+// BatchEmbeddingProvider is an embedding provider that supports batches.
+type BatchEmbeddingProvider = contracts.BatchEmbeddingProvider
 
-// RerankingProvider defines the interface for providers that support reranking.
-// Reranking models score query-document pairs to assess relevance.
-type RerankingProvider interface {
-	Provider
-	// Rerank scores documents by relevance to the query.
-	// Returns relevance scores in the same order as input documents.
-	// Scores are typically in [0, 1] range where higher means more relevant.
-	// criteria: Optional domain-specific guidance for relevance scoring (appended to base prompt)
-	// documents: Array of types.Document with content and metadata
-	Rerank(ctx context.Context, query string, documents []types.Document, criteria string) ([]float64, error)
-}
+// RerankingProvider is a provider that can score documents by relevance.
+type RerankingProvider = contracts.RerankingProvider
 
 // New creates a provider with an empty registry and therefore returns an
 // unknown-provider error for every concrete provider.
