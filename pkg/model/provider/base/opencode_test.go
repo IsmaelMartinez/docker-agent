@@ -75,8 +75,7 @@ func TestOpenCodeSessionIDIsStableAndOpaque(t *testing.T) {
 	a := opencodeSessionID("conversation-a")
 	b := opencodeSessionID("conversation-b")
 
-	// Pinned so a change to the namespace or hash cannot silently give every
-	// resumed session a new ID after an upgrade.
+	// Pinned: a namespace change would rotate every resumed session's ID.
 	assert.Equal(t, "58407f8e-c204-56ce-8fcf-8ae43bcc4a8c", a)
 	assert.NotEqual(t, a, b, "different sessions must map to different header values")
 	assert.NotEqual(t, "conversation-a", a, "raw session ID must not leak")
@@ -84,8 +83,6 @@ func TestOpenCodeSessionIDIsStableAndOpaque(t *testing.T) {
 	require.NoError(t, err, "header value must be a UUID")
 }
 
-// headerRecorder is a RoundTripper that records the session header of every
-// request it sees and answers with an empty 200.
 type headerRecorder struct {
 	seen []string
 }

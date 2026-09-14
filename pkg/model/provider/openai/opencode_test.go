@@ -20,8 +20,6 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 )
 
-// startOpenCodeCapture returns a fake OpenAI-compatible endpoint that records
-// the x-opencode-session header of every request.
 func startOpenCodeCapture(t *testing.T) (*httptest.Server, func() []string) {
 	t.Helper()
 	var mu sync.Mutex
@@ -40,10 +38,8 @@ func startOpenCodeCapture(t *testing.T) (*httptest.Server, func() []string) {
 	}
 }
 
-// redirectTo returns a transport wrapper that sends every request to target,
-// so a client configured for opencode.ai (the only signal the host check has
-// for a custom provider) can be exercised against a local server, plus a
-// snapshot of the session header the wrapper itself was handed.
+// redirectTo lets a client configured for opencode.ai hit a local server and
+// records the header the wrapper itself saw.
 func redirectTo(t *testing.T, target string) (options.Opt, func() []string) {
 	t.Helper()
 	u, err := url.Parse(target)
@@ -132,8 +128,6 @@ func TestOpenCodeSessionHeaderOnCustomProvider(t *testing.T) {
 	t.Parallel()
 	server, seen := startOpenCodeCapture(t)
 	redirect, wrapperSaw := redirectTo(t, server.URL)
-	// A custom OpenAI-compatible provider reaches this client with the
-	// OpenCode base URL and no alias (see provider.mergeFromProviderConfig).
 	client := newOpenCodeTestClient(t, &latest.ModelConfig{
 		Provider: "openai",
 		Model:    "kimi-k2.6",
@@ -227,8 +221,7 @@ func TestOpenCodeSessionHeaderNotSentToOtherProviders(t *testing.T) {
 func TestOpenCodeSessionHeaderNotSentThroughGateway(t *testing.T) {
 	t.Parallel()
 	server, seen := startOpenCodeCapture(t)
-	// server.URL is 127.0.0.1 which IsTrustedDockerURL considers trusted,
-	// so we must supply the Docker Desktop token.
+	// 127.0.0.1 counts as a trusted Docker URL, so a Desktop token is required.
 	env := environment.NewMapEnvProvider(map[string]string{
 		environment.DockerDesktopTokenEnv: "test-dd-token",
 	})
