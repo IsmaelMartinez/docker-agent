@@ -23,7 +23,6 @@ import (
 	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/modelsdev"
-	ragtypes "github.com/docker/docker-agent/pkg/rag/types"
 	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
@@ -363,6 +362,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	// the events channel — on every exit path, including errors and
 	// cancellation — so no subscription outlives its sink.
 	defer r.subscribePlanChanges(sess, sink)()
+	defer r.subscribeToolsetEvents(sess, sink)()
 
 	a := r.resolveSessionAgent(sess)
 
@@ -390,8 +390,21 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		sink.Emit(BudgetUsage(sess.ID, a.Name(), b.snapshot()))
 	}
 
+	ctx = tools.WithHandlerScope(ctx, tools.HandlerScope{
+		Elicitation:       r.elicitationHandler,
+		Sampling:          r.samplingHandler,
+		SamplingWithTools: r.samplingWithToolsHandler,
+		OAuthSuccess: func() {
+			sink.Emit(Authorization(tools.ElicitationActionAccept, r.resolveSessionAgent(sess).Name()))
+		},
+	})
+
 	r.emitAgentWarnings(a, sink)
-	r.configureToolsetHandlers(a, sink)
+	for _, name := range r.team.AgentNames() {
+		if configured, err := r.team.Agent(name); err == nil {
+			r.configureToolsetHandlers(configured)
+		}
+	}
 
 	agentTools, err := r.getTools(ctx, sess, a, sessionSpan, sink, true)
 	if err != nil {
@@ -495,7 +508,6 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		}
 
 		r.emitAgentWarnings(a, sink)
-		r.configureToolsetHandlers(a, sink)
 
 		agentTools, err := r.getTools(ctx, sess, a, sessionSpan, sink, true)
 		if err != nil {
@@ -1607,7 +1619,7 @@ func (r *LocalRuntime) getTools(ctx context.Context, sess *session.Session, a *a
 	agentTools, err := a.Tools(ctx)
 	if err == nil {
 		agentTools = filterExcludedTools(agentTools, sess.ExcludedTools)
-		agentTools = r.skillSubSessionTools(ctx, sess, a, agentTools, events)
+		agentTools = r.skillSubSessionTools(ctx, sess, a, agentTools)
 		// Tool-mode structured output rides on the same error path: a name
 		// collision with the reserved internal tool or an uncompilable schema
 		// must fail the turn loudly, not mask one of the two tools.
@@ -1625,27 +1637,17 @@ func (r *LocalRuntime) getTools(ctx context.Context, sess *session.Session, a *a
 	return agentTools, nil
 }
 
-// configureToolsetHandlers sets up elicitation and OAuth handlers for all toolsets of an agent.
-func (r *LocalRuntime) configureToolsetHandlers(a *agent.Agent, events EventSink) {
+// configureToolsetHandlers installs stable request-scoped dispatchers.
+func (r *LocalRuntime) configureToolsetHandlers(a *agent.Agent) {
 	for _, toolset := range a.ToolSets() {
 		tools.ConfigureHandlers(toolset,
-			r.elicitationHandler,
-			r.samplingHandler,
-			r.samplingWithToolsHandler,
-			func() { events.Emit(Authorization(tools.ElicitationActionAccept, a.Name())) },
+			tools.ScopedElicitationHandler,
+			tools.SamplingScopeHandler,
+			tools.SamplingWithToolsScopeHandler,
+			nil,
 			r.managedOAuth,
 			r.unmanagedOAuthRedirectURI,
 		)
-
-		// Wire RAG event forwarding so the TUI shows indexing progress.
-		// Use a non-blocking sink because the RAG file watcher is a
-		// long-lived goroutine that may outlive the per-message events
-		// channel; a blocking send after the channel is closed would
-		// crash, and a blocking send when the consumer has gone away
-		// would deadlock.
-		for _, ragTool := range tools.FindAll[ragtypes.EventForwarder](toolset) {
-			ragTool.SetEventCallback(ragEventForwarder(ragTool.Name(), r, nonBlocking(events).Emit))
-		}
 	}
 }
 
@@ -1823,7 +1825,7 @@ func toolNameMatchesAny(name string, patterns []string) bool {
 // inherited agent tools, then appends the tools from the skill's assistive
 // toolsets (which bypass the allow-list — the skill explicitly asked for
 // them). It is a no-op for ordinary sessions that set neither field.
-func (r *LocalRuntime) skillSubSessionTools(ctx context.Context, sess *session.Session, a *agent.Agent, agentTools []tools.Tool, events EventSink) []tools.Tool {
+func (r *LocalRuntime) skillSubSessionTools(ctx context.Context, sess *session.Session, a *agent.Agent, agentTools []tools.Tool) []tools.Tool {
 	if len(sess.AllowedTools) == 0 && len(sess.ExtraToolSets) == 0 {
 		return agentTools
 	}
@@ -1832,10 +1834,10 @@ func (r *LocalRuntime) skillSubSessionTools(ctx context.Context, sess *session.S
 
 	for _, ts := range sess.ExtraToolSets {
 		tools.ConfigureHandlers(ts,
-			r.elicitationHandler,
-			r.samplingHandler,
-			r.samplingWithToolsHandler,
-			func() { events.Emit(Authorization(tools.ElicitationActionAccept, a.Name())) },
+			tools.ScopedElicitationHandler,
+			tools.SamplingScopeHandler,
+			tools.SamplingWithToolsScopeHandler,
+			nil,
 			r.managedOAuth,
 			r.unmanagedOAuthRedirectURI,
 		)
