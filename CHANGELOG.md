@@ -3,6 +3,67 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.139.0] - 2026-09-14
+
+This release delivers several bug fixes for runtime delegation, TUI message handling, and configuration isolation, alongside new API capabilities, TUI performance improvements, and new lint enforcement tooling.
+
+## What's New
+
+- Adds `GET /api/sessions?active=true` query parameter for lightweight listing of currently attached sessions without reading full session history from disk
+- Adds toolset graph traversal and explicit `RuntimeHandler` identity to correctly wire capabilities for composite or decorator-wrapped toolsets
+- Adds `HookBuiltinsDocumented` lint cop and documents previously missing hook builtins (`http_post`, `limit_large_tool_results`, `safer_shell`, `snapshot`) in schema and docs
+- Adds `EnvironmentVariablePrefix` lint cop enforcing the `DOCKER_AGENT_` prefix for public environment variables; migrates `CAGENT_PPROF_ADDR` to `DOCKER_AGENT_PPROF_ADDR`
+- Adds `TUIKeyBindings` lint cop to enforce safe key binding comparisons in TUI code, preventing silent mismatches from raw `msg.String()` comparisons
+
+## Improvements
+
+- Retains message renders on height-only terminal resize, skipping redundant re-renders when width is unchanged
+- Preallocates transcript lines from cached heights to reduce allocations during TUI layout
+
+## Bug Fixes
+
+- Fixes race condition in `LoadWithConfig` by always cloning `RuntimeConfig` to keep resolved models, providers, and encrypted config isolated per load
+- Fixes TUI to allow editing pending (steered/follow-up/queued) messages via Alt+Up, withdrawing them back into the editor in submission order
+- Fixes pending-message restoration integrated with tab ownership in the TUI
+- Fixes classification of idle streams before output in the runtime
+- Fixes retry admission for delegated idle streams with a one-time direct-transfer retry
+- Fixes recovery of direct task transfers in the runtime
+- Fixes preservation of omitted default model policies in config
+- Fixes isolation of per-agent CLI model override policies while preserving real model identity
+- Fixes `--record`/`--fake` capture proxy to require Docker Desktop authentication only for HTTPS `docker.com` gateway requests, not loopback or third-party gateways
+
+## Technical Changes
+
+- Consolidates per-tab UI state into `tabModel` in the TUI, replacing six separate maps and top-level aliases
+- Makes empty provider registry explicit by renaming `DefaultRegistry` to `EmptyRegistry` and removing silent nil-registry fallbacks
+- Refreshes the embedded models.dev catalog snapshot (+310 added, -83 removed, ~331 updated)
+- Adds CI reporting for failed main test runs, filing deduplicated bug issues with throttled repeat comments
+- Stabilizes the zizmor workflow audit in CI
+- Speeds up Go tests in CI and improves failure reporting with timing summaries and raw JSON output artifacts
+### Pull Requests
+
+- [#4227](https://github.com/docker/docker-agent/pull/4227) - chore(deps): bump the actions group across 1 directory with 3 updates
+- [#4240](https://github.com/docker/docker-agent/pull/4240) - docs: update CHANGELOG.md for v1.138.1
+- [#4241](https://github.com/docker/docker-agent/pull/4241) - fix: always clone RuntimeConfig in LoadWithConfig to prevent race
+- [#4243](https://github.com/docker/docker-agent/pull/4243) - chore: bump direct Go dependencies (20 of 22)
+- [#4244](https://github.com/docker/docker-agent/pull/4244) - feat: add GET /api/sessions?active=true for lightweight attached-session listing
+- [#4245](https://github.com/docker/docker-agent/pull/4245) - feat(ci): report failed main test runs
+- [#4247](https://github.com/docker/docker-agent/pull/4247) - fix: recover delegated idle streams and preserve model override policy
+- [#4248](https://github.com/docker/docker-agent/pull/4248) - fix(tui): allow editing pending messages
+- [#4249](https://github.com/docker/docker-agent/pull/4249) - ci: speed up Go tests and improve CI failure reporting
+- [#4251](https://github.com/docker/docker-agent/pull/4251) - docs: auto-update for merged PRs (2026-09-12)
+- [#4252](https://github.com/docker/docker-agent/pull/4252) - fix(record): require Docker auth only for HTTPS docker.com gateways
+- [#4254](https://github.com/docker/docker-agent/pull/4254) - chore(deps): bump docker/docs/.github/workflows/validate-upstream.yml from 920ee0bb1e638c6a39d7c2a1075fa2b1d8f451a7 to bbf8dfd2f0205fd5c754eedceac8f8b69aa91f81 in the actions group across 1 directory
+- [#4255](https://github.com/docker/docker-agent/pull/4255) - refactor(tui): consolidate tab UI ownership
+- [#4256](https://github.com/docker/docker-agent/pull/4256) - refactor(provider): make empty registry explicit
+- [#4257](https://github.com/docker/docker-agent/pull/4257) - feat: toolset graph traversal and explicit RuntimeHandler identity
+- [#4258](https://github.com/docker/docker-agent/pull/4258) - chore: refresh models.dev snapshot (+310 -83 ~331)
+- [#4259](https://github.com/docker/docker-agent/pull/4259) - perf(tui): avoid redundant renders on height-only resize
+- [#4260](https://github.com/docker/docker-agent/pull/4260) - feat(lint): add HookBuiltinsDocumented cop and document missing builtins
+- [#4261](https://github.com/docker/docker-agent/pull/4261) - feat(lint): add EnvironmentVariablePrefix cop and migrate pprof to DOCKER_AGENT_PPROF_ADDR
+- [#4262](https://github.com/docker/docker-agent/pull/4262) - feat(lint): enforce TUI key bindings
+
+
 ## [v1.138.1] - 2026-09-11
 
 This release adds kubectl and AWS CLI to sandbox templates, introduces secure HTTP relay packages and improved share signing, fixes session and race condition bugs, and includes several CI pipeline improvements.
@@ -6173,3 +6234,5 @@ This release improves the terminal user interface with better error handling and
 [v1.138.0]: https://github.com/docker/docker-agent/releases/tag/v1.138.0
 
 [v1.138.1]: https://github.com/docker/docker-agent/releases/tag/v1.138.1
+
+[v1.139.0]: https://github.com/docker/docker-agent/releases/tag/v1.139.0
