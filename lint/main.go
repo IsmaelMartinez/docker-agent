@@ -46,6 +46,7 @@ var cops = []cop.Cop{
 	AtomicStateWrite,
 	HTTPClientTransport,
 	ToolsetSchemaRegistrySync,
+	StatePathViaPathsPackage,
 }
 
 // programCops lists whole-program, inter-procedural cops. These run once over
