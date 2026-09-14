@@ -21,12 +21,14 @@ require_input() {
   }
 }
 
+# The jobs log API prefixes every line with a timestamp; `gh run view --log`
+# output (still accepted) adds the job and step names before it.
 normalize_log() {
   perl -pe '
     s/\e\[[0-?]*[ -\/]*[@-~]//g;
     s/\r$//;
     s/[^\x09\x0A\x20-\x7E]/?/g;
-    s/^[^\t]*\t[^\t]*\t[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})[\t ]//;
+    s/^(?:[^\t]*\t[^\t]*\t)?[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})[\t ]//;
   ' "$1" > "$2"
 }
 
@@ -116,7 +118,7 @@ log_excerpt() {
     }
     {
       if (test_name == "") {
-        emit($0)
+        tail[NR] = $0
         next
       }
       if (!found && is_root_failure($0)) {
@@ -156,6 +158,15 @@ log_excerpt() {
     }
     BEGIN {
       replay_context = 1
+    }
+    END {
+      # Without a test name the failure sits at the end of the job log.
+      if (test_name == "") {
+        start = NR > 12 ? NR - 11 : 1
+        for (i = start; i <= NR; i++) {
+          emit(tail[i])
+        }
+      }
     }
   ' "$log_file"
 }
@@ -315,7 +326,10 @@ main() {
     raw_log="$TMP_DIR/$job_id.raw.log"
     clean_log="$TMP_DIR/$job_id.log"
     tests_file="$TMP_DIR/$job_id.tests"
-    gh run view "$RUN_ID" --repo "$GH_REPO" --job "$job_id" --log-failed > "$raw_log"
+    # `gh run view --log-failed` refuses to serve logs while the run is in
+    # progress, and this job is part of the run it reports on. The jobs log
+    # endpoint serves a job's log as soon as that job has completed.
+    gh api "repos/$GH_REPO/actions/jobs/$job_id/logs" > "$raw_log"
     normalize_log "$raw_log" "$clean_log"
     failed_tests "$clean_log" > "$tests_file"
     classification="$(classify_log "$clean_log")"
