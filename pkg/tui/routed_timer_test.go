@@ -62,11 +62,11 @@ func newRoutedTestModel(t *testing.T, makePage func(sess *session.Session, routi
 	m.supervisor = sv
 	require.Equal(t, activeID, sv.ActiveID())
 
-	m.chatPages[activeID] = makePage(sessA, activeID)
-	m.chatPages[backgroundID] = makePage(sessB, backgroundID)
-	m.chatPage = m.chatPages[activeID]
-	m.sessionStates[activeID] = service.NewSessionState(sessA)
-	m.sessionStates[backgroundID] = service.NewSessionState(sessB)
+	m.ensureTab(activeID).chatPage = makePage(sessA, activeID)
+	m.ensureTab(backgroundID).chatPage = makePage(sessB, backgroundID)
+	m.activeTab = m.tabs[activeID]
+	m.ensureTab(activeID).sessionState = service.NewSessionState(sessA)
+	m.ensureTab(backgroundID).sessionState = service.NewSessionState(sessB)
 	return m, activeID, backgroundID
 }
 
@@ -84,7 +84,7 @@ func TestHandleRoutedMsg_InactiveTabKeepsRoutedTimers(t *testing.T) {
 			timerCmd: func() tea.Msg { return timerMarkerMsg{} },
 		}
 	})
-	background := m.chatPages[backgroundID].(*timerRecordingPage)
+	background := m.tabs[backgroundID].chatPage.(*timerRecordingPage)
 
 	inner := runtime.AgentSwitching(true, "root", "scout")
 	_, cmd := m.Update(messages.RoutedMsg{SessionID: backgroundID, Inner: inner})
@@ -138,8 +138,8 @@ func TestHandleRoutedMsg_TransferOnHiddenTabArmsTimersAndStaysLocal(t *testing.T
 	})
 
 	assert.NotNil(t, cmd, "the hidden tab's presentation timers survive the UI-cmd discard")
-	assert.Contains(t, ansi.Strip(m.chatPages[backgroundID].View()), transferBoxMarker,
+	assert.Contains(t, ansi.Strip(m.tabs[backgroundID].chatPage.View()), transferBoxMarker,
 		"the hop's box shows on its owning tab")
-	assert.NotContains(t, ansi.Strip(m.chatPages[activeID].View()), transferBoxMarker,
+	assert.NotContains(t, ansi.Strip(m.tabs[activeID].chatPage.View()), transferBoxMarker,
 		"the active tab shows nothing for another tab's hop")
 }

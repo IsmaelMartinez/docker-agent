@@ -110,11 +110,10 @@ func harnessRoot(tb testing.TB, width, height int, ar *animation.Runtime) (*appM
 	ss.SetCurrentAgentName("root")
 	page := chat.New(m.ar, tb.Context(), a, ss, chat.WithHideSidebar())
 	_ = page.SetSize(width, height-9)
-	m.chatPages = map[string]chat.Page{}
-	m.sessionStates = map[string]*service.SessionState{}
+	m.tabs = map[string]*tabModel{"profile": {editor: m.activeTab.editor}}
 	m.supervisor.AddSession(tb.Context(), a, sess, "", nil)
-	m.chatPages["profile"], m.sessionStates["profile"] = page, ss
-	m.chatPage, m.sessionState, m.application = page, ss, a
+	m.tabs["profile"].chatPage, m.tabs["profile"].sessionState = page, ss
+	m.activeTab, m.application = m.tabs["profile"], a
 	m.workingSpinner = spinner.New(m.ar, spinner.ModeSpinnerOnly, styles.SpinnerDotsHighlightStyle)
 	m.handleWindowResize(width, height)
 	_ = m.Init() // synchronously loads the session; returned one-shot commands are warm-up only

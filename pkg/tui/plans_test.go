@@ -37,7 +37,7 @@ func newPlansTestModel(t *testing.T) (*appModel, plans.Service) {
 
 	sess := session.New()
 	m.application = app.New(t.Context(), stubRuntime{}, sess)
-	m.sessionState = service.NewSessionState(sess)
+	m.activeTab.sessionState = service.NewSessionState(sess)
 	return m, svc
 }
 
@@ -428,7 +428,7 @@ func TestPlanChangedEvent_BackgroundSessionStillRefreshes(t *testing.T) {
 	backgroundID := sv.AddSession(t.Context(), nil, session.New(), "", nil)
 	m.supervisor = sv
 	require.Equal(t, activeID, sv.ActiveID())
-	m.chatPages[backgroundID] = &mockChatPage{}
+	m.ensureTab(backgroundID).chatPage = &mockChatPage{}
 
 	openPlanBrowser(t, m, plans.ListResult{Plans: []plans.Plan{}})
 

@@ -63,7 +63,7 @@ func (m *appModel) handleTourKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "esc":
 		return m.tour.Quit(), true
 	case "enter":
-		if m.focusedPanel == PanelEditor && strings.TrimSpace(m.editor.Value()) == "" {
+		if m.focusedPanel == PanelEditor && strings.TrimSpace(m.activeTab.editor.Value()) == "" {
 			return m.tour.Advance(), true
 		}
 	}

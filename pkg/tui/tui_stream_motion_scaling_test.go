@@ -90,7 +90,7 @@ func TestActualProgramLongStreamMotionWorkIsViewportBounded(t *testing.T) {
 	root, _, _ := wallClockRoot(t, 120, 40)
 	sess, _, _ := mixedHistorySession(1000)
 	root.application.Session().Messages = sess.Messages
-	_ = root.chatPage.Init()
+	_ = root.activeTab.chatPage.Init()
 	root.handleWindowResize(120, 40)
 	_, _ = root.Update(messages.RoutedMsg{SessionID: "profile", Inner: agentruntime.StreamStarted("profile", "root")})
 	_ = root.View()

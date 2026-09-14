@@ -54,7 +54,7 @@ func TestReplayPendingEvent_RestoresStashedDialog(t *testing.T) {
 		"/tmp",
 		nil,
 	))
-	m.sessionStates[sessionID] = service.NewSessionState(&session.Session{ID: sessionID})
+	m.ensureTab(sessionID).sessionState = service.NewSessionState(&session.Session{ID: sessionID})
 
 	// Simulate the pre-conditions of a tab-switch-while-dialog-open:
 	//   - the supervisor has a pending event for this tab
@@ -63,7 +63,7 @@ func TestReplayPendingEvent_RestoresStashedDialog(t *testing.T) {
 	m.supervisor.SetPendingEvent(sessionID, event)
 
 	stashed := &stubDialog{id: "stashed"}
-	m.stashedDialogs[sessionID] = stashedDialog{
+	m.ensureTab(sessionID).stashedDialog = &stashedDialog{
 		dialog: stashed,
 		event:  event,
 	}
@@ -83,7 +83,7 @@ func TestReplayPendingEvent_RestoresStashedDialog(t *testing.T) {
 		"the open command must carry the matching originating event")
 
 	// Stash entry is consumed exactly once.
-	_, stillStashed := m.stashedDialogs[sessionID]
+	stillStashed := m.tabs[sessionID].stashedDialog != nil
 	assert.False(t, stillStashed, "stash entry must be removed after consumption")
 }
 
@@ -105,12 +105,12 @@ func TestReplayPendingEvent_DiscardsStaleStash(t *testing.T) {
 		"/tmp",
 		nil,
 	)
-	m.sessionStates[sessionID] = service.NewSessionState(&session.Session{ID: sessionID})
+	m.ensureTab(sessionID).sessionState = service.NewSessionState(&session.Session{ID: sessionID})
 
 	// Original event the user was answering when they left the tab.
 	originalEvent := &runtime.ElicitationRequestEvent{Message: "first prompt"}
 	stashed := &stubDialog{id: "stashed"}
-	m.stashedDialogs[sessionID] = stashedDialog{
+	m.ensureTab(sessionID).stashedDialog = &stashedDialog{
 		dialog: stashed,
 		event:  originalEvent,
 	}
@@ -135,7 +135,7 @@ func TestReplayPendingEvent_DiscardsStaleStash(t *testing.T) {
 		"the open command must carry the *new* event")
 
 	// The stale stash must not linger after this call.
-	_, stillStashed := m.stashedDialogs[sessionID]
+	stillStashed := m.tabs[sessionID].stashedDialog != nil
 	assert.False(t, stillStashed, "stale stash entry must be removed")
 }
 
@@ -157,18 +157,18 @@ func TestReplayPendingEvent_NoPendingEvent_ClearsStash(t *testing.T) {
 		"/tmp",
 		nil,
 	)
-	m.sessionStates[sessionID] = service.NewSessionState(&session.Session{ID: sessionID})
+	m.ensureTab(sessionID).sessionState = service.NewSessionState(&session.Session{ID: sessionID})
 
 	// Stash exists but the supervisor has no pending event (e.g. the stream
 	// stopped while the user was on another tab).
-	m.stashedDialogs[sessionID] = stashedDialog{
+	m.ensureTab(sessionID).stashedDialog = &stashedDialog{
 		dialog: &stubDialog{id: "orphan"},
 		event:  &runtime.ElicitationRequestEvent{Message: "obsolete"},
 	}
 
 	cmd := m.replayPendingEvent(sessionID)
 	assert.Nil(t, cmd, "no pending event ⇒ no command to run")
-	_, stillStashed := m.stashedDialogs[sessionID]
+	stillStashed := m.tabs[sessionID].stashedDialog != nil
 	assert.False(t, stillStashed, "orphaned stash must be cleared")
 }
 
@@ -231,7 +231,7 @@ func TestReplayPendingEvent_ReplaysConcurrentElicitationsInFIFOOrder(t *testing.
 	m, _ := newTestModel(t)
 	m.supervisor = supervisor.New(nil)
 	m.supervisor.AddSession(t.Context(), nil, &session.Session{ID: sessionID}, "/tmp", nil)
-	m.sessionStates[sessionID] = service.NewSessionState(&session.Session{ID: sessionID})
+	m.ensureTab(sessionID).sessionState = service.NewSessionState(&session.Session{ID: sessionID})
 
 	first := &runtime.ElicitationRequestEvent{Message: "worker1 needs input", ElicitationID: "e1"}
 	second := &runtime.ElicitationRequestEvent{Message: "worker2 needs input", ElicitationID: "e2"}

@@ -26,15 +26,15 @@ import (
 
 // updateChatCmd forwards a message to the chat page and returns its cmd.
 func (m *appModel) updateChatCmd(msg tea.Msg) tea.Cmd {
-	updated, cmd := m.chatPage.Update(msg)
-	m.chatPage = updated.(chat.Page)
+	updated, cmd := m.activeTab.chatPage.Update(msg)
+	m.activeTab.chatPage = updated.(chat.Page)
 	return cmd
 }
 
 // updateEditorCmd forwards a message to the editor and returns its cmd.
 func (m *appModel) updateEditorCmd(msg tea.Msg) tea.Cmd {
-	updated, cmd := m.editor.Update(msg)
-	m.editor = updated.(editor.Editor)
+	updated, cmd := m.activeTab.editor.Update(msg)
+	m.activeTab.editor = updated.(editor.Editor)
 	return cmd
 }
 
