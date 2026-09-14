@@ -469,6 +469,37 @@ func TestEscapeInterruptsActiveRun(t *testing.T) {
 	assert.Less(t, responseAt, cancelledAt)
 }
 
+func TestEscapeFinalizesToolWithoutResponse(t *testing.T) {
+	t.Parallel()
+	m := bareModel(24)
+	m.busy = true
+	m.runCancel = func() {}
+	toolCall := tools.ToolCall{
+		ID: "call-1",
+		Function: tools.FunctionCall{
+			Name:      "edit_file",
+			Arguments: `{}`,
+		},
+	}
+	m.handleEvent(t.Context(), runtime.ToolCall(toolCall, tools.Tool{Name: "edit_file"}, "coder"))
+	m.screen.Transcript.AppendAssistant("partial response")
+
+	m.handleKey(t.Context(), ui.Key{Typ: ui.KeyEsc})
+	m.handleEvent(t.Context(), runtime.StreamStopped("session", "coder", "canceled"))
+
+	assert.Zero(t, m.screen.Transcript.ToolCount())
+	assert.Zero(t, m.screen.Transcript.ToolByIDCount())
+	transcript := strings.Join(m.screen.Transcript.Lines(80, 0, false, m.sessionState, nil), "\n")
+	responseAt := strings.Index(transcript, "partial response")
+	toolAt := strings.Index(transcript, "edit_file")
+	cancelledAt := strings.Index(transcript, "Cancelled")
+	assert.NotEqual(t, -1, responseAt)
+	assert.NotEqual(t, -1, toolAt)
+	assert.NotEqual(t, -1, cancelledAt)
+	assert.Less(t, responseAt, toolAt)
+	assert.Less(t, toolAt, cancelledAt)
+}
+
 func TestCtrlCCancelMarkerFollowsBufferedResponse(t *testing.T) {
 	t.Parallel()
 	m := bareModel(24)
