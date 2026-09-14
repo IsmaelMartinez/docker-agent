@@ -132,7 +132,16 @@ jobs:
         run: task build
 
       - name: Test
-        run: task test
+        run: task test-ci
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-test-${{ github.job }}
+          path: ${{ runner.temp }}/go-test.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Test binary
         run: task test-binary
@@ -162,7 +171,16 @@ jobs:
           Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
 
       - name: Test
-        run: task test
+        run: task test-ci
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-test-${{ github.job }}
+          path: ${{ runner.temp }}/go-test.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   # Compile-only checks kept out of `test-linux` so they run alongside it.
   cross-compile:

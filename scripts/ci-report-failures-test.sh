@@ -29,6 +29,9 @@ if [ "$1" = api ] && [[ "$*" == *'/actions/runs/123/jobs?per_page=100'* ]]; then
       if [ "$SCENARIO" = create ]; then
         printf '2\ttest-windows\thttps://example.test/jobs/2\n'
         printf '3\ttest-race\thttps://example.test/jobs/3\n'
+        printf '5\ttest-windows\thttps://example.test/jobs/5\n'
+        printf '6\ttest-linux\thttps://example.test/jobs/6\n'
+        printf '7\ttest-linux\thttps://example.test/jobs/7\n'
       fi
       ;;
     collapse) printf '4\ttest-linux\thttps://example.test/jobs/4\n' ;;
@@ -40,8 +43,19 @@ if [ "$1 $2" = 'run view' ]; then
   case "$7" in
     1)
       cat <<'EOF'
-test-linux	Test	2026-01-01T00:00:00Z	--- FAIL: TestShared (0.01s)
-test-linux	Test	2026-01-01T00:00:00Z	    shared_test.go:10: expected true
+test-linux	Test	2026-01-01T00:00:00Z === RUN   TestShared
+test-linux	Test	2026-01-01T00:00:00Z === RUN   TestShared/real-subtest
+test-linux	Test	2026-01-01T00:00:00Z     shared_test.go:10:
+test-linux	Test	2026-01-01T00:00:00Z         Error Trace: shared_test.go:10
+test-linux	Test	2026-01-01T00:00:00Z         Error:       Not equal:
+test-linux	Test	2026-01-01T00:00:00Z                      expected:
+test-linux	Test	2026-01-01T00:00:00Z                      true
+test-linux	Test	2026-01-01T00:00:00Z                      actual:
+test-linux	Test	2026-01-01T00:00:00Z                      false
+test-linux	Test	2026-01-01T00:00:00Z --- FAIL: TestShared/real-subtest (0.01s)
+test-linux	Test	2026-01-01T00:00:00Z --- FAIL: TestShared (0.01s)
+test-linux	Test	2026-01-01T00:00:00Z FAIL
+test-linux	Test	2026-01-01T00:00:00Z FAIL	example/shared	0.02s
 EOF
       ;;
     2)
@@ -49,8 +63,50 @@ EOF
       ;;
     3)
       cat <<'EOF'
-test-race	Test	2026-01-01T00:00:00Z	WARNING: DATA RACE
-test-race	Test	2026-01-01T00:00:00Z	--- FAIL: TestShared (0.02s)
+test-race	Test	2026-01-01T00:00:00.1234567Z WARNING: DATA RACE
+test-race	Test	2026-01-01T00:00:00.1234567Z --- FAIL: TestShared/race-subtest (0.01s)
+test-race	Test	2026-01-01T00:00:00.1234567Z --- FAIL: TestShared (0.02s)
+EOF
+      ;;
+    5)
+      cat <<'EOF'
+=== RUN   TestJSONReporter
+=== RUN   TestJSONReporter/json-subtest
+    reporter_test.go:20: assertion diagnostic before root marker
+--- FAIL: TestJSONReporter/json-subtest (0.01s)
+--- FAIL: TestJSONReporter (0.02s)
+    reporter_test.go:21: assertion diagnostic after root marker
+FAIL	example/reporter	0.02s
+EOF
+      ;;
+    6)
+      cat <<'EOF'
+test-race	Test	2026-01-01T00:00:00.1234567Z	--- FAIL: TestLegacyFirst (0.01s)
+test-race	Test	2026-01-01T00:00:00.1234567Z	    first_test.go:10: first root diagnostic
+test-race	Test	2026-01-01T00:00:00.1234567Z	--- FAIL: TestLegacySecond (0.02s)
+test-race	Test	2026-01-01T00:00:00.1234567Z	    second_test.go:20: second root diagnostic
+test-race	Test	2026-01-01T00:00:00.1234567Z	FAIL
+test-race	Test	2026-01-01T00:00:00.1234567Z	FAIL	example/legacy	0.02s
+EOF
+      ;;
+    7)
+      cat <<'EOF'
+=== RUN   TestParallelFirst
+=== PAUSE TestParallelFirst
+=== CONT  TestParallelFirst
+=== RUN   TestParallelFirst/child
+    parallel_test.go:10: first parallel diagnostic
+--- FAIL: TestParallelFirst (0.01s)
+    --- FAIL: TestParallelFirst/child (0.01s)
+=== RUN   TestParallelSecond
+=== PAUSE TestParallelSecond
+=== CONT  TestParallelSecond
+=== NAME  TestParallelSecond/child
+    parallel_test.go:20: second parallel diagnostic
+--- FAIL: TestParallelSecond (0.02s)
+    --- FAIL: TestParallelSecond/child (0.02s)
+FAIL
+FAIL	example/parallel	0.03s
 EOF
       ;;
     4)
@@ -108,7 +164,7 @@ chmod +x "$TMP/bin/gh"
 run_reporter() {
   local scenario="$1"
   local dry_run="${2:-false}"
-  local max_new_issues="${3:-5}"
+  local max_new_issues="${3:-10}"
   SCENARIO="$scenario" \
   GH_MOCK_DIR="$TMP/capture" \
   GH_TOKEN=test-token \
@@ -128,12 +184,69 @@ grep -q 'No failed target test jobs found.' <<< "$output"
 
 rm -f "$TMP/capture"/*
 output="$(run_reporter create)"
-grep -q 'Failure reporting complete: 2 new issue(s), 0 deferred candidate(s).' <<< "$output"
-[ "$(find "$TMP/capture" -name 'body-*.md' | wc -l | tr -d ' ')" -eq 2 ]
+grep -q 'Failure reporting complete: 7 new issue(s), 0 deferred candidate(s).' <<< "$output"
+[ "$(find "$TMP/capture" -name 'body-*.md' | wc -l | tr -d ' ')" -eq 7 ]
 grep -q "The top-level test \`TestShared\` failed" "$TMP/capture"/body-*.md
+grep -q "The top-level test \`TestJSONReporter\` failed" "$TMP/capture"/body-*.md
+grep -q "The top-level test \`TestLegacyFirst\` failed" "$TMP/capture"/body-*.md
+grep -q "The top-level test \`TestLegacySecond\` failed" "$TMP/capture"/body-*.md
+grep -q "The top-level test \`TestParallelFirst\` failed" "$TMP/capture"/body-*.md
+grep -q "The top-level test \`TestParallelSecond\` failed" "$TMP/capture"/body-*.md
 grep -q 'test-linux.*assertion' "$TMP/capture"/body-*.md
 grep -q 'test-race.*data race' "$TMP/capture"/body-*.md
+legacy_first_body="$(grep -l "The top-level test \`TestLegacyFirst\` failed" "$TMP/capture"/body-*.md)"
+legacy_second_body="$(grep -l "The top-level test \`TestLegacySecond\` failed" "$TMP/capture"/body-*.md)"
+grep -q -- '^    --- FAIL: TestLegacyFirst (0.01s)$' "$legacy_first_body"
+grep -q 'first root diagnostic' "$legacy_first_body"
+if grep -q 'TestLegacySecond\|second root diagnostic' "$legacy_first_body"; then
+  echo 'second root test leaked into the first legacy excerpt' >&2
+  exit 1
+fi
+grep -q -- '^    --- FAIL: TestLegacySecond (0.02s)$' "$legacy_second_body"
+grep -q 'second root diagnostic' "$legacy_second_body"
+if grep -q 'TestLegacyFirst\|first root diagnostic' "$legacy_second_body"; then
+  echo 'first root test leaked into the second legacy excerpt' >&2
+  exit 1
+fi
+if grep -q 'FAIL.*example/legacy' "$legacy_first_body" "$legacy_second_body"; then
+  echo 'package-level FAIL noise leaked into a legacy root test excerpt' >&2
+  exit 1
+fi
+parallel_first_body="$(grep -l "The top-level test \`TestParallelFirst\` failed" "$TMP/capture"/body-*.md)"
+parallel_second_body="$(grep -l "The top-level test \`TestParallelSecond\` failed" "$TMP/capture"/body-*.md)"
+grep -q 'first parallel diagnostic' "$parallel_first_body"
+if grep -q 'TestParallelSecond\|second parallel diagnostic' "$parallel_first_body"; then
+  echo 'second parallel root leaked into the first excerpt' >&2
+  exit 1
+fi
+grep -q 'second parallel diagnostic' "$parallel_second_body"
+if grep -q 'TestParallelFirst\|first parallel diagnostic' "$parallel_second_body"; then
+  echo 'first parallel root leaked into the second excerpt' >&2
+  exit 1
+fi
+grep -q 'Error Trace: shared_test.go:10' "$TMP/capture"/body-*.md
+grep -q 'expected:' "$TMP/capture"/body-*.md
+grep -q 'actual:' "$TMP/capture"/body-*.md
+if grep -q 'FAIL.*example/shared' "$TMP/capture"/body-*.md; then
+  echo 'package-level FAIL noise leaked into the root test excerpt' >&2
+  exit 1
+fi
+json_body="$(grep -l "The top-level test \`TestJSONReporter\` failed" "$TMP/capture"/body-*.md)"
+json_marker_line="$(grep -n -- '^    --- FAIL: TestJSONReporter (0.02s)$' "$json_body" | cut -d: -f1)"
+json_context_line="$(grep -n 'assertion diagnostic before root marker' "$json_body" | cut -d: -f1)"
+[ "$json_marker_line" -lt "$json_context_line" ]
+grep -q 'assertion diagnostic after root marker' "$json_body"
+if grep -q 'FAIL.*example/reporter' "$json_body"; then
+  echo 'package-level FAIL noise leaked into the JSON root test excerpt' >&2
+  exit 1
+fi
+if grep -q 'The top-level test `Test.*/' "$TMP/capture"/body-*.md || \
+  grep -q -- '--title \[Flaky\\ test\]\\ Test.*/' "$TMP/capture/calls"; then
+  echo 'subtest failure became an issue candidate' >&2
+  exit 1
+fi
 grep -q 'no top-level failed tests' "$TMP/capture"/body-*.md
+grep -q 'test-windows (timeout)' "$TMP/capture"/body-*.md
 grep -q -- '--type Bug' "$TMP/capture/calls"
 grep -q -- '--assignee dgageot' "$TMP/capture/calls"
 grep -q -- '--label flaky-test\\,automated\\,area/testing\\,status/needs-triage\\,area/ci' "$TMP/capture/calls"
@@ -142,7 +255,7 @@ rm -f "$TMP/capture"/*
 output="$(run_reporter create true 1)"
 grep -q 'DRY RUN: would create issue' <<< "$output"
 grep -q 'Deferred new candidate after reaching the per-run limit' <<< "$output"
-grep -q 'Failure reporting complete: 1 new issue(s), 1 deferred candidate(s).' <<< "$output"
+grep -q 'Failure reporting complete: 1 new issue(s), 6 deferred candidate(s).' <<< "$output"
 
 rm -f "$TMP/capture"/*
 output="$(run_reporter collapse)"

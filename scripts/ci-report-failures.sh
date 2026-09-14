@@ -22,7 +22,12 @@ require_input() {
 }
 
 normalize_log() {
-  perl -pe 's/\e\[[0-?]*[ -\/]*[@-~]//g; s/\r$//; s/[^\x09\x0A\x20-\x7E]/?/g' "$1" > "$2"
+  perl -pe '
+    s/\e\[[0-?]*[ -\/]*[@-~]//g;
+    s/\r$//;
+    s/[^\x09\x0A\x20-\x7E]/?/g;
+    s/^[^\t]*\t[^\t]*\t[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})[\t ]//;
+  ' "$1" > "$2"
 }
 
 classify_log() {
@@ -40,14 +45,12 @@ failed_tests() {
   awk '
     {
       message = $0
-      if (index($0, "\t") > 0) {
-        split($0, fields, "\t")
-        message = fields[4]
-      }
       if (message ~ /^--- FAIL: Test[^[:space:]()]*/) {
         sub(/^--- FAIL: /, "", message)
         sub(/[[:space:](].*$/, "", message)
-        print message
+        if (index(message, "/") == 0) {
+          print message
+        }
       }
     }
   ' "$1" | LC_ALL=C sort -u
@@ -58,21 +61,101 @@ log_excerpt() {
   local test_name="${2:-}"
 
   awk -v test_name="$test_name" '
-    BEGIN {
-      needle = test_name == "" ? "" : "--- FAIL: " test_name
+    function is_root_failure(line, suffix) {
+      if (index(line, "--- FAIL: " test_name) != 1) {
+        return 0
+      }
+      suffix = substr(line, length("--- FAIL: " test_name) + 1, 1)
+      return suffix == "" || suffix == " " || suffix == "("
+    }
+    function is_package_failure(line) {
+      return line == "FAIL" || line ~ /^FAIL[[:space:]]/
+    }
+    function test_boundary(line) {
+      boundary_test = ""
+      if (line ~ /^=== (RUN|CONT|PAUSE|NAME)[[:space:]]+/) {
+        boundary_test = line
+        sub(/^=== (RUN|CONT|PAUSE|NAME)[[:space:]]+/, "", boundary_test)
+        return 1
+      }
+      if (line ~ /^--- (FAIL|PASS|SKIP): /) {
+        boundary_test = line
+        sub(/^--- (FAIL|PASS|SKIP): /, "", boundary_test)
+        sub(/[[:space:](].*$/, "", boundary_test)
+        return 1
+      }
+      return 0
+    }
+    function is_selected_scope(name) {
+      return name == test_name || index(name, test_name "/") == 1
+    }
+    function clear_context(i) {
+      for (i = 1; i <= buffered; i++) {
+        delete context[i]
+      }
+      buffered = 0
+    }
+    function buffer(line, i) {
+      if (buffered == 10) {
+        for (i = 1; i < buffered; i++) {
+          context[i] = context[i + 1]
+        }
+        buffered--
+      }
+      context[++buffered] = line
+    }
+    function emit(line, remaining, text) {
+      if (lines >= 12 || chars >= 1600) {
+        return
+      }
+      remaining = 1600 - chars
+      text = length(line) > remaining ? substr(line, 1, remaining) : line
+      print text
+      chars += length(text) + 1
+      lines++
     }
     {
-      if (!found && (needle == "" || index($0, needle) > 0)) {
+      if (test_name == "") {
+        emit($0)
+        next
+      }
+      if (!found && is_root_failure($0)) {
         found = 1
-        lines = 12
+        emit($0)
+        for (i = 1; i <= buffered; i++) {
+          emit(context[i])
+        }
+        next
       }
-      if (found && lines > 0 && chars < 1600) {
-        remaining = 1600 - chars
-        text = length($0) > remaining ? substr($0, 1, remaining) : $0
-        print text
-        chars += length(text) + 1
-        lines--
+      if (found) {
+        if (is_package_failure($0)) {
+          exit
+        }
+        if (test_boundary($0) && !is_selected_scope(boundary_test)) {
+          exit
+        }
+        emit($0)
+        next
       }
+      if (test_boundary($0)) {
+        related = is_selected_scope(boundary_test)
+        if ($0 ~ /^--- FAIL: / && related && replay_context) {
+          buffer($0)
+          next
+        }
+        clear_context()
+        replay_context = related
+        if (related) {
+          buffer($0)
+        }
+        next
+      }
+      if (replay_context) {
+        buffer($0)
+      }
+    }
+    BEGIN {
+      replay_context = 1
     }
   ' "$log_file"
 }
