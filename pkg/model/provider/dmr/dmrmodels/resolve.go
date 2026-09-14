@@ -154,7 +154,7 @@ func ResolveBaseURL(ctx context.Context, cfg *latest.ModelConfig, endpoint strin
 	baseURL, httpClient := resolvePrimaryDMRURL(endpoint)
 
 	// Test connectivity and try fallbacks if needed
-	testClient := cmp.Or(httpClient, &http.Client{})
+	testClient := cmp.Or(httpClient, &http.Client{}) //rubocop:disable Lint/HTTPClientTransport // DMR connectivity probe; default transport is appropriate
 	containerized := inContainer()
 
 	if !testDMRConnectivity(ctx, testClient, baseURL) {
@@ -165,7 +165,7 @@ func ResolveBaseURL(ctx context.Context, cfg *latest.ModelConfig, endpoint strin
 				continue
 			}
 			slog.DebugContext(ctx, "DMR trying fallback endpoint", "url", fallbackURL)
-			if testDMRConnectivity(ctx, &http.Client{}, fallbackURL) {
+			if testDMRConnectivity(ctx, &http.Client{}, fallbackURL) { //rubocop:disable Lint/HTTPClientTransport // DMR connectivity probe; default transport is appropriate
 				slog.InfoContext(ctx, "DMR using fallback endpoint", "fallback_url", fallbackURL, "original_url", baseURL)
 				return fallbackURL, nil
 			}

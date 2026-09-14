@@ -44,6 +44,7 @@ var cops = []cop.Cop{
 	NoStdoutInLibraries,
 	OTelTracerName,
 	AtomicStateWrite,
+	HTTPClientTransport,
 }
 
 // programCops lists whole-program, inter-procedural cops. These run once over
