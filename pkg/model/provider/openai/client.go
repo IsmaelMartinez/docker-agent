@@ -80,6 +80,15 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 				option.WithAPIKey(""),
 				option.WithMiddleware(chatgptAuthMiddleware(tokenSource)),
 			)
+		case globalOptions.TokenSource() != nil:
+			tokenSource := globalOptions.TokenSource()
+			if _, err := tokenSource(ctx); err != nil {
+				return nil, fmt.Errorf("resolving access token: %w", err)
+			}
+			clientOptions = append(clientOptions,
+				option.WithAPIKey(""),
+				option.WithMiddleware(tokenAuthMiddleware(tokenSource)),
+			)
 		case cfg.TokenKey != "":
 			// Explicit token_key configured - use that env var
 			authToken, tokenKey := authTokenForTokenKey(ctx, cfg, env)
@@ -857,7 +866,13 @@ func (c *Client) buildWSHeaderFn() func(ctx context.Context) (http.Header, error
 
 		// Resolve the API key using the same logic as the HTTP client.
 		var apiKey string
-		if c.ModelConfig.TokenKey != "" {
+		if source := c.ModelOptions.TokenSource(); source != nil {
+			var err error
+			apiKey, err = source(ctx)
+			if err != nil {
+				return nil, err
+			}
+		} else if c.ModelConfig.TokenKey != "" {
 			apiKey, _ = authTokenForTokenKey(ctx, &c.ModelConfig, c.Env)
 		}
 		if apiKey == "" {

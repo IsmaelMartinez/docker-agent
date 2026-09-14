@@ -9,6 +9,9 @@ import (
 	"github.com/docker/docker-agent/pkg/modelsdev"
 )
 
+// TokenSource returns the bearer token for each provider request.
+type TokenSource func(context.Context) (string, error)
+
 type ModelOptions struct {
 	gateway          string
 	encryptedConfig  string
@@ -20,6 +23,7 @@ type ModelOptions struct {
 	providers        map[string]latest.ProviderConfig
 	modelsDevStore   *modelsdev.Store
 	transportWrapper func(http.RoundTripper) http.RoundTripper
+	tokenSource      TokenSource
 	openAIVendor     bool
 }
 
@@ -72,6 +76,10 @@ func (c *ModelOptions) ModelsDevStore() *modelsdev.Store {
 // that must not leak onto an OpenAI-compatible alias for a different vendor.
 func (c *ModelOptions) OpenAIVendor() bool {
 	return c.openAIVendor
+}
+
+func (c *ModelOptions) TokenSource() TokenSource {
+	return c.tokenSource
 }
 
 // TransportWrapper returns the HTTP transport wrapper function registered via
@@ -187,6 +195,14 @@ func WithOpenAIVendor(v bool) Opt {
 	}
 }
 
+// WithTokenSource configures request-time bearer-token resolution. OpenAI
+// direct clients use it before token_key; gateway and ChatGPT auth stay separate.
+func WithTokenSource(source TokenSource) Opt {
+	return func(cfg *ModelOptions) {
+		cfg.tokenSource = source
+	}
+}
+
 // WithHTTPTransportWrapper registers a function that wraps the HTTP transport
 // used by provider clients (Anthropic, OpenAI, and Gemini with the Gemini API
 // backend). The function receives the transport that docker-agent built
@@ -254,6 +270,9 @@ func FromModelOptions(m ModelOptions) []Opt {
 	}
 	if m.transportWrapper != nil {
 		out = append(out, WithHTTPTransportWrapper(m.transportWrapper))
+	}
+	if m.tokenSource != nil {
+		out = append(out, WithTokenSource(m.tokenSource))
 	}
 	if m.openAIVendor {
 		out = append(out, WithOpenAIVendor(true))
