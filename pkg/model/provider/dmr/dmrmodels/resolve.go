@@ -46,7 +46,7 @@ var ErrNotInstalled = errors.New("docker model runner is not available\nplease i
 // --json flag). Matching on content rather than the exact message keeps the
 // detection stable across docker CLI usage-text changes.
 func IsNotInstalledError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "unknown flag: --json")
+	return err != nil && strings.Contains(err.Error(), "unknown flag: --json") //rubocop:disable Lint/ErrorStringMatching // Docker CLI does not expose a typed error for unsupported flags
 }
 
 // defaultURL builds the standard DMR inference URL for a given host and port.
