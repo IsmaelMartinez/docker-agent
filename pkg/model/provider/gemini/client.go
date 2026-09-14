@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"google.golang.org/genai"
@@ -155,43 +154,23 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 
 		// When using a Gateway, tokens are short-lived.
 		clientFn = func(ctx context.Context) (*genai.Client, error) {
-			// Query a fresh auth token each time the client is used.
-			authToken, err := base.GatewayAuthToken(ctx, env, gateway)
+			// Only the gateway emits keepalive frames that the GenAI SDK rejects.
+			connection, err := base.NewGatewayClient(ctx, env, gateway, "https://generativelanguage.googleapis.com/", "/", cfg, &globalOptions, httpclient.WithSSEKeepaliveFilter())
 			if err != nil {
 				return nil, err
 			}
 
-			url, err := url.Parse(gateway)
-			if err != nil {
-				return nil, fmt.Errorf("invalid gateway URL: %w", err)
-			}
-			baseURL := fmt.Sprintf("%s://%s%s/", url.Scheme, url.Host, url.Path)
-
-			httpOptions := base.GatewayHTTPOptions(url, "https://generativelanguage.googleapis.com/", cfg, &globalOptions)
-			httpOptions = append(httpOptions, base.GatewayAuthRetry(env, gateway)...)
-
-			httpOpts := genai.HTTPOptions{
-				BaseURL: baseURL,
-			}
-			if authToken != "" {
+			httpOpts := genai.HTTPOptions{BaseURL: connection.BaseURL}
+			if connection.AuthToken != "" {
 				httpOpts.Headers = http.Header{
-					"Authorization": []string{"Bearer " + authToken},
+					"Authorization": []string{"Bearer " + connection.AuthToken},
 				}
 			}
 
-			// The gateway keeps long generations alive with `event: keepalive`
-			// + `data: {}` frames, which genai's SSE parser rejects as fatal
-			// invalid chunks. Drop them here, on the gateway path only — direct
-			// Gemini/Vertex clients never receive them.
-			httpOptions = append(httpOptions, httpclient.WithSSEKeepaliveFilter())
-
-			gatewayHTTPClient := httpclient.NewHTTPClient(ctx, httpOptions...)
-			globalOptions.WrapTransport(ctx, gatewayHTTPClient)
-
 			return genai.NewClient(ctx, &genai.ClientConfig{
-				APIKey:      authToken,
+				APIKey:      connection.AuthToken,
 				Backend:     genai.BackendGeminiAPI,
-				HTTPClient:  gatewayHTTPClient,
+				HTTPClient:  connection.HTTPClient,
 				HTTPOptions: httpOpts,
 			})
 		}
