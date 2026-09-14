@@ -42,6 +42,12 @@ func TestNewClient_TokenKey(t *testing.T) {
 			wantErr:  "OPENCODE_API_KEY environment variable is required",
 		},
 		{
+			name:     "empty token_key variable does not fall back",
+			tokenKey: "OPENCODE_API_KEY",
+			env:      map[string]string{"OPENCODE_API_KEY": "", "ANTHROPIC_API_KEY": "anthropic-key"},
+			wantErr:  "OPENCODE_API_KEY environment variable is required",
+		},
+		{
 			name:    "no token_key keeps ANTHROPIC_API_KEY",
 			env:     map[string]string{"ANTHROPIC_API_KEY": "anthropic-key"},
 			wantKey: "anthropic-key",

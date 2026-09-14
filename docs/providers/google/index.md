@@ -10,7 +10,7 @@ _Use Gemini 2.5 Flash, Gemini 3.1 Pro, and other Google models with Docker Agent
 
 ## Setup
 
-Docker Agent reads the first credential it finds from these environment variables (see `pkg/model/provider/gemini/client.go`), unless the model or its [custom provider](../custom/index.md) sets `token_key`, in which case that variable is used instead:
+Docker Agent reads the first credential it finds from these environment variables (see `pkg/model/provider/gemini/client.go`):
 
 | Variable                    | Purpose                                                                             |
 | --------------------------- | ----------------------------------------------------------------------------------- |
@@ -19,6 +19,8 @@ Docker Agent reads the first credential it finds from these environment variable
 | `GOOGLE_GENAI_USE_VERTEXAI` | When set (any value), routes through Vertex AI instead of the Gemini Developer API. |
 | `GOOGLE_CLOUD_PROJECT`      | GCP project used when `GOOGLE_GENAI_USE_VERTEXAI` is set or for Vertex AI Model Garden. |
 | `GOOGLE_CLOUD_LOCATION`     | GCP region for Vertex AI (defaults to the SDK default).                             |
+
+On the Gemini Developer API, a model or [custom provider](../custom/index.md) that sets `token_key` reads its key from that variable instead of `GOOGLE_API_KEY` / `GEMINI_API_KEY`. The Vertex AI backends use Application Default Credentials and ignore `token_key`.
 
 ```bash
 # Gemini Developer API

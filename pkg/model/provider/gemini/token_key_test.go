@@ -42,9 +42,20 @@ func TestNewClient_TokenKey(t *testing.T) {
 			wantErr:  "OPENCODE_API_KEY environment variable is required",
 		},
 		{
+			name:     "empty token_key variable does not fall back",
+			tokenKey: "OPENCODE_API_KEY",
+			env:      map[string]string{"OPENCODE_API_KEY": "", "GOOGLE_API_KEY": "google-key"},
+			wantErr:  "OPENCODE_API_KEY environment variable is required",
+		},
+		{
 			name:    "no token_key keeps GOOGLE_API_KEY over GEMINI_API_KEY",
 			env:     map[string]string{"GEMINI_API_KEY": "gemini-key", "GOOGLE_API_KEY": "google-key"},
 			wantKey: "google-key",
+		},
+		{
+			name:    "no token_key accepts GEMINI_API_KEY alone",
+			env:     map[string]string{"GEMINI_API_KEY": "gemini-key"},
+			wantKey: "gemini-key",
 		},
 		{
 			name:    "no token_key and no native variable",

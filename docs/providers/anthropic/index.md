@@ -15,7 +15,7 @@ _Use Claude Sonnet 5, Claude Opus 5, and other Anthropic models with Docker Agen
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-A model or [custom provider](../custom/index.md) that sets `token_key` reads its key from that variable instead of `ANTHROPIC_API_KEY`.
+When no `auth` block is configured, a model or [custom provider](../custom/index.md) that sets `token_key` reads its key from that variable instead of `ANTHROPIC_API_KEY`.
 
 ### Workload Identity Federation (no API key)
 
