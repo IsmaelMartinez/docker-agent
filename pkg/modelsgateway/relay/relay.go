@@ -111,7 +111,7 @@ func New(target Target, path string, tokens TokenSource, validator Validator, op
 		}
 	}
 	if r.client == nil {
-		r.client = &http.Client{}
+		r.client = &http.Client{} //rubocop:disable Lint/HTTPClientTransport // models-gateway relay; transport configured via clone below
 	} else {
 		clone := *r.client
 		r.client = &clone

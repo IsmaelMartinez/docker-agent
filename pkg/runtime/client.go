@@ -48,7 +48,7 @@ func WithAuthToken(token string) ClientOption {
 func WithTimeout(timeout time.Duration) ClientOption {
 	return func(c *Client) {
 		if c.httpClient == nil {
-			c.httpClient = &http.Client{}
+			c.httpClient = &http.Client{} //rubocop:disable Lint/HTTPClientTransport // remote runtime client; transport set via Clone in callers
 		}
 		c.httpClient.Timeout = timeout
 	}
@@ -73,7 +73,7 @@ func NewClient(baseURL string, opts ...ClientOption) (*Client, error) {
 
 	client := &Client{
 		baseURL: parsedURL,
-		httpClient: &http.Client{
+		httpClient: &http.Client{ //rubocop:disable Lint/HTTPClientTransport // remote runtime base client; callers may add OTel transport via WithOTelTransport
 			Timeout: 30 * time.Second,
 		},
 		registry: map[string]func() Event{

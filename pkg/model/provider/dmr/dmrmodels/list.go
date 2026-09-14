@@ -49,7 +49,7 @@ func ListModels(ctx context.Context) ([]string, error) {
 
 	baseURL, httpClient := ResolveBaseURL(ctx, &latest.ModelConfig{}, endpoint)
 	if httpClient == nil {
-		httpClient = &http.Client{}
+		httpClient = &http.Client{} //rubocop:disable Lint/HTTPClientTransport // DMR local service; default transport is appropriate
 	}
 
 	return ListModelsAt(ctx, httpClient, baseURL)

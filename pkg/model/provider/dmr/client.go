@@ -124,7 +124,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, opts ...options.Opt
 
 	// Ensure we always have a non-nil HTTP client for both OpenAI adapter and direct HTTP calls (rerank).
 	if httpClient == nil {
-		httpClient = &http.Client{}
+		httpClient = &http.Client{} //rubocop:disable Lint/HTTPClientTransport // DMR local service; default transport is appropriate
 	}
 
 	if verifyViaAPI {

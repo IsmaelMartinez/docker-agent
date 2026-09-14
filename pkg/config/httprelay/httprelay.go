@@ -49,7 +49,7 @@ func New(source Source, opts ...Option) (*Handler, error) {
 		return nil, errors.New("config relay timeout must be positive")
 	}
 	if h.client == nil {
-		h.client = &http.Client{}
+		h.client = &http.Client{} //rubocop:disable Lint/HTTPClientTransport // relay client; transport configured by callers via WithHTTPClient
 	} else {
 		clone := *h.client
 		h.client = &clone
