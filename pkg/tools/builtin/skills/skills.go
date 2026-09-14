@@ -457,11 +457,12 @@ func (s *ToolSet) Tools(context.Context) ([]tools.Tool, error) {
 	// Expose run_skill if any skill uses context: fork
 	if s.hasForkSkills() {
 		result = append(result, tools.Tool{
-			Name:         ToolNameRunSkill,
-			Category:     "skills",
-			Description:  "Run a skill in a forked context with its own conversation history. Use this for skills marked with forked mode — never use transfer_task for skills.",
-			Parameters:   tools.MustSchemaFor[RunSkillArgs](),
-			OutputSchema: tools.MustSchemaFor[string](),
+			Name:           ToolNameRunSkill,
+			RuntimeHandler: ToolNameRunSkill,
+			Category:       "skills",
+			Description:    "Run a skill in a forked context with its own conversation history. Use this for skills marked with forked mode — never use transfer_task for skills.",
+			Parameters:     tools.MustSchemaFor[RunSkillArgs](),
+			OutputSchema:   tools.MustSchemaFor[string](),
 			Annotations: tools.ToolAnnotations{
 				Title: "Run Skill",
 			},

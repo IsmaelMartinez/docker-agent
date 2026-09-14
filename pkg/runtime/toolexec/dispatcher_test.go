@@ -281,7 +281,8 @@ func TestDispatcher_RoutesToRuntimeHandler(t *testing.T) {
 	// Toolset handler must NOT be called when a runtime handler is registered
 	// for the same name.
 	tool := tools.Tool{
-		Name: "transfer_task",
+		Name:           "transfer_task",
+		RuntimeHandler: "transfer_task",
 		Handler: func(context.Context, tools.ToolCall, tools.Runtime) (*tools.ToolCallResult, error) {
 			t.Fatal("toolset handler must not be called when runtime handler exists")
 			return nil, nil
@@ -296,6 +297,78 @@ func TestDispatcher_RoutesToRuntimeHandler(t *testing.T) {
 	assert.Equal(t, 1, handlerCalls)
 	require.Len(t, em.responses, 1)
 	assert.Equal(t, "transferred", em.responses[0].Output)
+}
+
+func TestDispatcher_ToolNameDoesNotSelectRuntimeHandler(t *testing.T) {
+	t.Parallel()
+	a := newAgent()
+	sess := session.New()
+	sess.ToolsApproved = true
+
+	var runtimeCalls, toolsetCalls int
+	d := &toolexec.Dispatcher{
+		AgentFor: func(*session.Session) *agent.Agent { return a },
+		Handlers: map[string]toolexec.ToolHandler{
+			"handoff": func(context.Context, *session.Session, tools.ToolCall, tools.Runtime) (*tools.ToolCallResult, error) {
+				runtimeCalls++
+				return tools.ResultSuccess("runtime"), nil
+			},
+		},
+	}
+	tool := tools.Tool{
+		Name: "handoff",
+		Handler: func(context.Context, tools.ToolCall, tools.Runtime) (*tools.ToolCallResult, error) {
+			toolsetCalls++
+			return tools.ResultSuccess("external"), nil
+		},
+	}
+	em := &captureEmitter{}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "call_external",
+		Function: tools.FunctionCall{Name: "handoff", Arguments: "{}"},
+	}}, []tools.Tool{tool}, em)
+
+	assert.Equal(t, 0, runtimeCalls)
+	assert.Equal(t, 1, toolsetCalls)
+	require.Len(t, em.responses, 1)
+	assert.Equal(t, "external", em.responses[0].Output)
+}
+
+func TestDispatcher_MissingDeclaredRuntimeHandlerReturnsError(t *testing.T) {
+	t.Parallel()
+	a := newAgent()
+	sess := session.New()
+	sess.ToolsApproved = true
+	em := &captureEmitter{}
+	d := &toolexec.Dispatcher{AgentFor: func(*session.Session) *agent.Agent { return a }}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "call_missing",
+		Function: tools.FunctionCall{Name: "handoff", Arguments: "{}"},
+	}}, []tools.Tool{{Name: "handoff", RuntimeHandler: "handoff"}}, em)
+
+	require.Len(t, em.responses, 1)
+	assert.True(t, em.responses[0].IsError)
+	assert.Contains(t, em.responses[0].Output, "Runtime handler \"handoff\" is unavailable")
+}
+
+func TestDispatcher_UnmarkedToolWithoutHandlerReturnsError(t *testing.T) {
+	t.Parallel()
+	a := newAgent()
+	sess := session.New()
+	sess.ToolsApproved = true
+	em := &captureEmitter{}
+	d := &toolexec.Dispatcher{AgentFor: func(*session.Session) *agent.Agent { return a }}
+
+	d.Process(t.Context(), sess, []tools.ToolCall{{
+		ID:       "call_unmarked",
+		Function: tools.FunctionCall{Name: "handoff", Arguments: "{}"},
+	}}, []tools.Tool{{Name: "handoff"}}, em)
+
+	require.Len(t, em.responses, 1)
+	assert.True(t, em.responses[0].IsError)
+	assert.Contains(t, em.responses[0].Output, "Tool \"handoff\" has no handler")
 }
 
 func TestDispatcher_RuntimeHandlerPropagatesNestedStop(t *testing.T) {
@@ -323,7 +396,7 @@ func TestDispatcher_RuntimeHandlerPropagatesNestedStop(t *testing.T) {
 	stop, message := d.Process(t.Context(), sess, []tools.ToolCall{{
 		ID:       "call_skill",
 		Function: tools.FunctionCall{Name: "run_skill", Arguments: "{}"},
-	}}, []tools.Tool{{Name: "run_skill"}}, em)
+	}}, []tools.Tool{{Name: "run_skill", RuntimeHandler: "run_skill"}}, em)
 
 	assert.True(t, stop)
 	assert.Equal(t, "stop requested", message)

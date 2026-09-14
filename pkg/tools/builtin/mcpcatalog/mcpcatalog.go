@@ -86,7 +86,7 @@ type Toolset struct {
 
 	// elicitationHandler / oauthSuccessHandler / managedOAuth /
 	// toolsChangedHandler are captured before any server is enabled
-	// (the runtime calls these via tools.As[...] from
+	// (the runtime discovers these through the toolset graph from
 	// configureToolsetHandlers at the start of every turn). They are
 	// re-applied to each new mcp.Toolset on enable so OAuth elicitation,
 	// OAuth-success refreshes, the managed-vs-unmanaged flag and

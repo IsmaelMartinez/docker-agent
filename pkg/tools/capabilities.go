@@ -111,21 +111,18 @@ type ChangeNotifier interface {
 	SetToolsChangedHandler(handler func())
 }
 
-// ConfigureHandlers sets all applicable handlers on a toolset.
-// It checks for Elicitable, Sampleable, SampleableWithTools, and OAuthCapable
-// interfaces and configures them. This is a convenience function that handles
-// the capability checking internally.
+// ConfigureHandlers sets all applicable handlers throughout a toolset graph.
 func ConfigureHandlers(ts ToolSet, elicitHandler ElicitationHandler, samplingHandler SamplingHandler, samplingWithToolsHandler SamplingWithToolsHandler, oauthHandler func(), managedOAuth bool, unmanagedOAuthRedirectURI string) {
-	if e, ok := As[Elicitable](ts); ok {
+	for _, e := range FindAll[Elicitable](ts) {
 		e.SetElicitationHandler(elicitHandler)
 	}
-	if s, ok := As[Sampleable](ts); ok {
+	for _, s := range FindAll[Sampleable](ts) {
 		s.SetSamplingHandler(samplingHandler)
 	}
-	if s, ok := As[SampleableWithTools](ts); ok {
+	for _, s := range FindAll[SampleableWithTools](ts) {
 		s.SetSamplingWithToolsHandler(samplingWithToolsHandler)
 	}
-	if o, ok := As[OAuthCapable](ts); ok {
+	for _, o := range FindAll[OAuthCapable](ts) {
 		o.SetOAuthSuccessHandler(oauthHandler)
 		o.SetManagedOAuth(managedOAuth)
 		o.SetUnmanagedOAuthRedirectURI(unmanagedOAuthRedirectURI)

@@ -35,6 +35,7 @@ type lspRouteTarget struct {
 // Verify interface compliance.
 var (
 	_ tools.ToolSet      = (*Multiplexer)(nil)
+	_ tools.Composite    = (*Multiplexer)(nil)
 	_ tools.Startable    = (*Multiplexer)(nil)
 	_ tools.Instructable = (*Multiplexer)(nil)
 )
@@ -43,6 +44,15 @@ var (
 // to the appropriate backend based on file type.
 func NewLSPMultiplexer(backends []Backend) *Multiplexer {
 	return &Multiplexer{backends: slices.Clone(backends)}
+}
+
+// Children exposes the configured backend wrappers for capability discovery.
+func (m *Multiplexer) Children() []tools.ToolSet {
+	children := make([]tools.ToolSet, 0, len(m.backends))
+	for _, backend := range m.backends {
+		children = append(children, backend.Toolset)
+	}
+	return children
 }
 
 func (m *Multiplexer) Start(ctx context.Context) error {
