@@ -1749,6 +1749,7 @@ func (m *appModel) replaceActiveSession(ctx context.Context, sess *session.Sessi
 // in the same working directory.
 func (m *appModel) handleClearSession() (tea.Model, tea.Cmd) {
 	activeID := m.supervisor.ActiveID()
+	oldPersistedID := m.persistedSessionID(activeID)
 
 	// Cleanup old editor for the active session.
 	if tab := m.tabs[activeID]; tab != nil && tab.editor != nil {
@@ -1769,7 +1770,6 @@ func (m *appModel) handleClearSession() (tea.Model, tea.Cmd) {
 	// Update persisted tab to point to the new session.
 	if m.tuiStore != nil {
 		ctx := m.ctx()
-		oldPersistedID := m.persistedSessionID(activeID)
 		if err := m.tuiStore.UpdateTabSessionID(ctx, oldPersistedID, newSess.ID); err != nil {
 			slog.WarnContext(ctx, "Failed to update tab session ID after clear", "error", err)
 		}

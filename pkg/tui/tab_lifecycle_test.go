@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/docker/docker-agent/pkg/app"
+	"github.com/docker/docker-agent/pkg/paths"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tui/commands"
 	"github.com/docker/docker-agent/pkg/tui/components/editor"
@@ -20,6 +21,7 @@ import (
 	"github.com/docker/docker-agent/pkg/tui/page/chat"
 	"github.com/docker/docker-agent/pkg/tui/service"
 	"github.com/docker/docker-agent/pkg/tui/service/supervisor"
+	"github.com/docker/docker-agent/pkg/tui/service/tuistate"
 )
 
 func newTabLifecycleModel(t *testing.T) *appModel {
@@ -326,4 +328,28 @@ func TestRestorePendingMessagesUsesActiveTabEditor(t *testing.T) {
 
 	assert.Equal(t, "first pending message", firstEditor.Value())
 	assert.Equal(t, "second pending message", secondEditor.Value())
+}
+
+func TestClearSessionPersistsNewConversation(t *testing.T) {
+	paths.SetDataDir(t.TempDir())
+	t.Cleanup(func() { paths.SetDataDir("") })
+	m := newTabLifecycleModel(t)
+	store, err := tuistate.New(t.Context())
+	require.NoError(t, err)
+	m.tuiStore = store
+	tabID := m.supervisor.ActiveID()
+	oldID := m.application.Session().ID
+	require.NoError(t, store.AddTab(t.Context(), oldID, "/initial"))
+	require.NoError(t, store.SetActiveTab(t.Context(), oldID))
+
+	_, _ = m.handleClearSession()
+
+	newID := m.application.Session().ID
+	require.NotEqual(t, oldID, newID)
+	assert.Equal(t, tabID, m.supervisor.ActiveID(), "clearing preserves the routing identity")
+	tabs, activeID, err := store.GetTabs(t.Context())
+	require.NoError(t, err)
+	require.Len(t, tabs, 1)
+	assert.Equal(t, newID, tabs[0].SessionID)
+	assert.Equal(t, newID, activeID)
 }
