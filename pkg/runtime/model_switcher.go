@@ -901,7 +901,7 @@ func (r *LocalRuntime) createProviderFromConfig(ctx context.Context, cfg *latest
 		registry = r.providerRegistry
 	}
 	if registry == nil {
-		registry = provider.DefaultRegistry()
+		registry = provider.EmptyRegistry()
 	}
 	return registry.NewWithModels(ctx,
 		cfg,

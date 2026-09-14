@@ -21,6 +21,11 @@ import (
 	"github.com/docker/docker-agent/pkg/telemetry"
 )
 
+const (
+	envPprofAddr       = "DOCKER_AGENT_PPROF_ADDR"
+	cagentEnvPprofAddr = "CAGENT_PPROF_ADDR"
+)
+
 type apiFlags struct {
 	listenAddr            string
 	sessionDB             string
@@ -52,7 +57,7 @@ func newAPICmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&flags.authToken, "auth-token", "", "Bearer token required for API requests (empty = no authentication)")
 	cmd.PersistentFlags().Int64Var(&flags.maxRequestSize, "max-request-size", 1<<20, "Maximum request body size in bytes (default 1 MiB). Requests exceeding this limit are rejected with HTTP 413.")
 	cmd.PersistentFlags().StringVar(&flags.sessionWorkingDirRoot, "session-workingdir-root", "", "Restrict the working_dir of sessions created via POST /api/sessions to this directory and its descendants (empty = no restriction; recommended for multi-user deployments)")
-	cmd.PersistentFlags().StringVar(&flags.pprofAddr, "pprof-addr", "", "TCP host:port to expose Go pprof endpoints at /debug/pprof/ (e.g. 127.0.0.1:6060); also set via CAGENT_PPROF_ADDR")
+	cmd.PersistentFlags().StringVar(&flags.pprofAddr, "pprof-addr", "", "TCP host:port to expose Go pprof endpoints at /debug/pprof/ (e.g. 127.0.0.1:6060); also set via DOCKER_AGENT_PPROF_ADDR")
 	_ = cmd.PersistentFlags().MarkHidden("pprof-addr")
 	cmd.MarkFlagsMutuallyExclusive("fake", "record")
 	addRuntimeConfigFlags(cmd, &flags.runConfig)
@@ -103,7 +108,7 @@ func (f *apiFlags) runAPICommand(cmd *cobra.Command, args []string) (commandErr 
 		return errors.New("--pull-interval flag can only be used with OCI or URL references, not local files")
 	}
 
-	if pprofAddr := cmp.Or(f.pprofAddr, os.Getenv("CAGENT_PPROF_ADDR")); pprofAddr != "" {
+	if pprofAddr := cmp.Or(f.pprofAddr, os.Getenv(envPprofAddr), os.Getenv(cagentEnvPprofAddr)); pprofAddr != "" {
 		if err := profiling.StartPprofServer(ctx, pprofAddr); err != nil {
 			return err
 		}

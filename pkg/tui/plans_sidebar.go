@@ -4,7 +4,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/docker/docker-agent/pkg/tui/messages"
-	"github.com/docker/docker-agent/pkg/tui/page/chat"
 )
 
 func (m *appModel) planSidebarEnabled() bool {
@@ -26,20 +25,19 @@ func (m *appModel) updatePlanSidebar(data messages.PlanSidebarDataMsg) tea.Cmd {
 	m.planSidebarData = data
 	var cmds []tea.Cmd
 	activeUpdated := false
-	activeID := ""
-	if m.supervisor != nil {
-		activeID = m.supervisor.ActiveID()
-	}
-	for id, page := range m.chatPages {
-		updated, cmd := page.Update(data)
-		m.chatPages[id] = updated.(chat.Page)
-		if id == activeID {
-			m.chatPage = m.chatPages[id]
+	for _, tab := range m.tabs {
+		if tab.chatPage == nil {
+			continue
+		}
+		updated, effects := tab.chatPage.UpdateEffects(data)
+		tab.chatPage = updated
+		visible := tab == m.activeTab
+		if visible {
 			activeUpdated = true
 		}
-		cmds = append(cmds, cmd)
+		cmds = append(cmds, effects.Cmd(visible))
 	}
-	if !activeUpdated && m.chatPage != nil {
+	if !activeUpdated && m.activeTab != nil && m.activeTab.chatPage != nil {
 		cmds = append(cmds, m.updateChatCmd(data))
 	}
 	return tea.Batch(cmds...)

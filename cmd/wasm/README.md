@@ -201,8 +201,9 @@ behind their own packages — the wasm entry just doesn't import them.
 
 `pkg/model/provider` shares its registry implementation between native and
 js/wasm builds and imports no concrete SDK-backed providers. Its
-`DefaultRegistry()` is empty: code that previously relied on the WASM defaults
-must now pass an explicit registry. The demo retains its provider set through
+`EmptyRegistry()` contains no providers: code that constructs models must pass
+an explicit registry. The deprecated `DefaultRegistry()` is an alias kept for
+source compatibility. The demo retains its provider set through
 `demoProviders`; a smaller application can register just Anthropic:
 
 ```go

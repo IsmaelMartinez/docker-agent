@@ -74,7 +74,7 @@ func TestShowPlanBrowser_FIFOPlanFileDoesNotHang(t *testing.T) {
 	WithPlansService(svc)(m)
 	sess := session.New()
 	m.application = app.New(t.Context(), stubRuntime{}, sess)
-	m.sessionState = service.NewSessionState(sess)
+	m.activeTab.sessionState = service.NewSessionState(sess)
 
 	mustCreatePlan(t, svc, "good", "content")
 	if err := syscall.Mkfifo(filepath.Join(sharedDir, "wedged.json"), 0o600); err != nil {

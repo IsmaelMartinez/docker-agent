@@ -217,9 +217,8 @@ type Dispatcher struct {
 	// nil; treated the same as returning an empty slice.
 	Permissions func(*session.Session) []NamedChecker
 
-	// Handlers maps tool names to runtime-managed handlers (transfer_task,
-	// handoff, change_model, ...). Tools not in this map are routed to
-	// their toolset Handler.
+	// Handlers maps tools.Tool.RuntimeHandler identifiers to host-owned
+	// handlers. Tool names never select entries from this map.
 	Handlers map[string]ToolHandler
 
 	// Recall enqueues a tool-produced steering message. Tool handlers reach it
@@ -404,15 +403,27 @@ func (c *call) run(ctx context.Context) CallOutcome {
 		return CallOutcome{}
 	}
 
-	// Pick the deferred work that runs once approval clears: runtime-managed
-	// tools (transfer_task, handoff) have dedicated handlers; everything
-	// else goes through the toolset.
+	// Pick the executor declared by the resolved tool definition. Names are
+	// model-facing identifiers and never grant access to host-owned handlers.
 	var runTool func() CallOutcome
-	if handler, ok := c.d.Handlers[c.tc.Function.Name]; ok {
+	if c.tool.RuntimeHandler != "" {
+		handler, ok := c.d.Handlers[c.tool.RuntimeHandler]
+		if !ok {
+			msg := fmt.Sprintf("Runtime handler %q is unavailable.", c.tool.RuntimeHandler)
+			c.errorResponse(ctx, msg)
+			span.SetStatus(codes.Error, msg)
+			return CallOutcome{}
+		}
 		runTool = func() CallOutcome {
 			return c.runHandler(ctx, handler)
 		}
 	} else {
+		if c.tool.Handler == nil {
+			msg := fmt.Sprintf("Tool %q has no handler.", c.tool.Name)
+			c.errorResponse(ctx, msg)
+			span.SetStatus(codes.Error, msg)
+			return CallOutcome{}
+		}
 		runTool = func() CallOutcome {
 			return c.runToolset(ctx)
 		}

@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 	"unicode"
@@ -640,7 +639,7 @@ func (s *Server) steerSession(c echo.Context) error {
 	}
 
 	if err := s.sm.SteerSession(c.Request().Context(), sessionID, req.Messages); err != nil {
-		if strings.Contains(err.Error(), "queue full") {
+		if errors.Is(err, runtime.ErrSteerQueueFull) {
 			c.Response().Header().Set("Retry-After", "1")
 			return echo.NewHTTPError(http.StatusTooManyRequests, "steer queue full")
 		}
@@ -771,7 +770,7 @@ func (s *Server) followUpSession(c echo.Context) error {
 
 	streaming, duplicate, err := s.sm.FollowUpSession(c.Request().Context(), sessionID, req.Messages, idempotencyKey)
 	if err != nil {
-		if strings.Contains(err.Error(), "queue full") {
+		if errors.Is(err, runtime.ErrFollowUpQueueFull) {
 			c.Response().Header().Set("Retry-After", "1")
 			return echo.NewHTTPError(http.StatusTooManyRequests, "follow-up queue full")
 		}

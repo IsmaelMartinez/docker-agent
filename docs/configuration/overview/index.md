@@ -135,8 +135,8 @@ Resolve API keys and secrets at runtime rather than embedding them in agent conf
 | Variable                   | Provider                                            |
 | -------------------------- | --------------------------------------------------- |
 | `OPENAI_API_KEY`           | OpenAI                                              |
-| `ANTHROPIC_API_KEY`        | Anthropic                                           |
-| `GOOGLE_API_KEY` / `GEMINI_API_KEY` | Google Gemini                              |
+| `ANTHROPIC_API_KEY`        | Anthropic (override with `token_key`)               |
+| `GOOGLE_API_KEY` / `GEMINI_API_KEY` | Google Gemini (override with `token_key`)  |
 | `MISTRAL_API_KEY`          | Mistral                                             |
 | `XAI_API_KEY`              | xAI                                                 |
 | `NEBIUS_API_KEY`           | Nebius                                              |
@@ -485,7 +485,7 @@ agents:
 | `top_p`               | Default top-p sampling parameter.                                                         |
 | `frequency_penalty`   | Default frequency penalty.                                                                |
 | `presence_penalty`    | Default presence penalty.                                                                 |
-| `parallel_tool_calls` | Enable parallel tool calls by default.                                                    |
+| `parallel_tool_calls` | Enable or disable parallel tool calls by default. If omitted, the provider/API default is used.              |
 | `track_usage`         | Track token usage by default.                                                             |
 | `provider_opts`       | Provider-specific options.                                                                |
 

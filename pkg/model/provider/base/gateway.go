@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 
 	"github.com/docker/docker-agent/pkg/config/latest"
@@ -14,12 +16,12 @@ import (
 	"github.com/docker/docker-agent/pkg/model/provider/options"
 )
 
-// VerifyDockerGatewayAuth fails fast when gateway targets a trusted Docker
-// domain but Docker Desktop's auth token is unavailable. Provider clients
-// call it at construction time so a missing sign-in surfaces before the
-// first request. Non-Docker gateways need no Desktop token and always pass.
+// VerifyDockerGatewayAuth fails fast when gateway targets a Docker domain but
+// Docker Desktop's auth token is unavailable. Provider clients call it at
+// construction time so a missing sign-in surfaces before the first request.
+// Loopback and non-Docker gateways need no Desktop token and always pass.
 func VerifyDockerGatewayAuth(ctx context.Context, env environment.Provider, gateway string) error {
-	if !environment.IsTrustedDockerURL(gateway) {
+	if !environment.IsDockerDomainURL(gateway) {
 		return nil
 	}
 	if token, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); token == "" {
@@ -28,15 +30,15 @@ func VerifyDockerGatewayAuth(ctx context.Context, env environment.Provider, gate
 	return nil
 }
 
-// GatewayAuthToken returns a fresh Docker Desktop auth token when gateway
-// targets a trusted Docker domain, or "" for other gateways. Gateway clients
-// call it on every request because Desktop tokens are short-lived.
+// GatewayAuthToken returns a fresh Docker Desktop auth token for trusted
+// gateways. Docker domains require a token; loopback gateways may proceed
+// without one. Other gateways receive no Docker token.
 func GatewayAuthToken(ctx context.Context, env environment.Provider, gateway string) (string, error) {
 	if !environment.IsTrustedDockerURL(gateway) {
 		return "", nil
 	}
 	token, _ := env.Get(ctx, environment.DockerDesktopTokenEnv)
-	if token == "" {
+	if token == "" && environment.IsDockerDomainURL(gateway) {
 		return "", errors.New(NoDesktopTokenErrorMessage)
 	}
 	return token, nil
@@ -56,6 +58,38 @@ func GatewayAuthRetry(env environment.Provider, gateway string) []httpclient.Opt
 		desktop.InvalidateToken(rejected)
 		return GatewayAuthToken(ctx, env, gateway)
 	})}
+}
+
+// GatewayClient holds the per-request HTTP client and SDK connection settings.
+// Each provider remains responsible for applying AuthToken to its SDK.
+type GatewayClient struct {
+	HTTPClient *http.Client
+	BaseURL    string
+	AuthToken  string
+}
+
+// NewGatewayClient refreshes gateway auth and builds a transport for one SDK call.
+// Call it inside the provider's clientFn, not at provider construction time.
+func NewGatewayClient(ctx context.Context, env environment.Provider, gateway, defaultBaseURL, pathSuffix string, cfg *latest.ModelConfig, modelOpts *options.ModelOptions, extra ...httpclient.Opt) (*GatewayClient, error) {
+	authToken, err := GatewayAuthToken(ctx, env, gateway)
+	if err != nil {
+		return nil, err
+	}
+	gatewayURL, err := url.Parse(gateway)
+	if err != nil {
+		return nil, fmt.Errorf("invalid gateway URL: %w", err)
+	}
+	// Preserve the existing path concatenation, including repeated slashes.
+	baseURL := fmt.Sprintf("%s://%s%s%s", gatewayURL.Scheme, gatewayURL.Host, gatewayURL.Path, pathSuffix)
+	httpOptions := GatewayHTTPOptions(gatewayURL, defaultBaseURL, cfg, modelOpts)
+	httpOptions = append(httpOptions, GatewayAuthRetry(env, gateway)...)
+	httpOptions = append(httpOptions, extra...)
+
+	client := httpclient.NewHTTPClient(ctx, httpOptions...)
+	if modelOpts != nil {
+		modelOpts.WrapTransport(ctx, client)
+	}
+	return &GatewayClient{HTTPClient: client, BaseURL: baseURL, AuthToken: authToken}, nil
 }
 
 // GatewayHTTPOptions builds the httpclient options shared by all

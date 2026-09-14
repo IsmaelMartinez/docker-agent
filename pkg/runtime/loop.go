@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path"
@@ -23,7 +24,6 @@ import (
 	"github.com/docker/docker-agent/pkg/httpclient"
 	"github.com/docker/docker-agent/pkg/model/provider"
 	"github.com/docker/docker-agent/pkg/modelsdev"
-	ragtypes "github.com/docker/docker-agent/pkg/rag/types"
 	"github.com/docker/docker-agent/pkg/runtime/toolexec"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/telemetry/genai"
@@ -247,6 +247,10 @@ func (r *LocalRuntime) streamStoppedTimeout() time.Duration {
 // the response, executes any tool calls, and loops until the model signals stop
 // or the iteration limit is reached.
 func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-chan Event {
+	return r.runStream(ctx, sess, defaultIdleStreamRetryPolicy())
+}
+
+func (r *LocalRuntime) runStream(ctx context.Context, sess *session.Session, idleRetryPolicy idleStreamRetryPolicy) <-chan Event {
 	slog.DebugContext(ctx, "Starting runtime stream", "agent", r.currentAgentName(), "session_id", sess.ID)
 	events := make(chan Event, defaultEventChannelCapacity)
 	rootStream := !sess.IsSubSession()
@@ -261,7 +265,7 @@ func (r *LocalRuntime) RunStream(ctx context.Context, sess *session.Session) <-c
 	// Register before the run goroutine starts so the session is listed in
 	// the /context team view (and targetable for explicit compaction) for
 	// the whole lifetime of its stream.
-	entry := r.registerLiveSession(sess)
+	entry := r.registerLiveSessionWithIdleRetry(sess, idleRetryPolicy)
 
 	go func() {
 		if rootStream {
@@ -363,6 +367,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	// the events channel — on every exit path, including errors and
 	// cancellation — so no subscription outlives its sink.
 	defer r.subscribePlanChanges(sess, sink)()
+	defer r.subscribeToolsetEvents(sess, sink)()
 
 	a := r.resolveSessionAgent(sess)
 
@@ -374,6 +379,7 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 	sessionStart := r.executeSessionStartHooks(ctx, sess, a, sink)
 	ls := &loopState{
 		maxIterations:          sess.MaxIterations,
+		idleRetry:              liveEntry.idleRetry,
 		sessionStartMsgs:       sessionStart.messages,
 		sessionStartLegacyMsgs: sessionStart.legacyMessages(),
 		sessionStartSources:    sessionStart.sources,
@@ -390,8 +396,21 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		sink.Emit(BudgetUsage(sess.ID, a.Name(), b.snapshot()))
 	}
 
+	ctx = tools.WithHandlerScope(ctx, tools.HandlerScope{
+		Elicitation:       r.elicitationHandler,
+		Sampling:          r.samplingHandler,
+		SamplingWithTools: r.samplingWithToolsHandler,
+		OAuthSuccess: func() {
+			sink.Emit(Authorization(tools.ElicitationActionAccept, r.resolveSessionAgent(sess).Name()))
+		},
+	})
+
 	r.emitAgentWarnings(a, sink)
-	r.configureToolsetHandlers(a, sink)
+	for _, name := range r.team.AgentNames() {
+		if configured, err := r.team.Agent(name); err == nil {
+			r.configureToolsetHandlers(configured)
+		}
+	}
 
 	agentTools, err := r.getTools(ctx, sess, a, sessionSpan, sink, true)
 	if err != nil {
@@ -495,7 +514,6 @@ func (r *LocalRuntime) runStreamLoop(ctx context.Context, sess *session.Session,
 		}
 
 		r.emitAgentWarnings(a, sink)
-		r.configureToolsetHandlers(a, sink)
 
 		agentTools, err := r.getTools(ctx, sess, a, sessionSpan, sink, true)
 		if err != nil {
@@ -661,6 +679,8 @@ type loopState struct {
 	// empty-response warning would otherwise imply. Reset on agent switch
 	// so it never carries across agents.
 	prevTurnMadeToolCalls bool
+	// idleRetry is shared by every turn and fallback attempt in this child run.
+	idleRetry *idleStreamRetryAllowance
 }
 
 // emptyTurnWarning classifies an empty assistant turn (no content, no tool
@@ -813,9 +833,23 @@ func (r *LocalRuntime) runTurn(
 	// Runtime message transforms run inside fallback.execute so each attempt
 	// uses the capabilities of the provider that will receive it.
 
-	// Try primary model with fallback chain if configured
+	// Try primary model with fallback chain if configured. The idle retry
+	// admission callback belongs to this loop invocation so a denial can stop
+	// this exact session before generic model-error handling runs.
 	agentTools = r.toolDeferrals.MarkAt(sess.ID, lastToolCallID(messages), agentTools)
-	res, usedModel, err := r.fallback.execute(streamCtx, a, model, messages, agentTools, sess, m, events)
+	admitIdleRetry := func() error {
+		if r.enforceBudget(ctx, sess, a, events) == iterationStop {
+			return budgetAdmissionError{}
+		}
+		return nil
+	}
+	res, usedModel, err := r.fallback.execute(streamCtx, a, model, messages, agentTools, sess, m, events, ls.idleRetry, admitIdleRetry)
+	var budgetStop budgetAdmissionError
+	if errors.As(err, &budgetStop) {
+		endStreamSpan()
+		endReason = turnEndReasonBudgetExceeded
+		return turnExit
+	}
 	if err != nil {
 		outcome := r.handleStreamError(ctx, sess, a, err, contextLimit, &ls.overflowCompactions, streamSpan, events)
 		endStreamSpan()
@@ -1607,7 +1641,7 @@ func (r *LocalRuntime) getTools(ctx context.Context, sess *session.Session, a *a
 	agentTools, err := a.Tools(ctx)
 	if err == nil {
 		agentTools = filterExcludedTools(agentTools, sess.ExcludedTools)
-		agentTools = r.skillSubSessionTools(ctx, sess, a, agentTools, events)
+		agentTools = r.skillSubSessionTools(ctx, sess, a, agentTools)
 		// Tool-mode structured output rides on the same error path: a name
 		// collision with the reserved internal tool or an uncompilable schema
 		// must fail the turn loudly, not mask one of the two tools.
@@ -1625,27 +1659,17 @@ func (r *LocalRuntime) getTools(ctx context.Context, sess *session.Session, a *a
 	return agentTools, nil
 }
 
-// configureToolsetHandlers sets up elicitation and OAuth handlers for all toolsets of an agent.
-func (r *LocalRuntime) configureToolsetHandlers(a *agent.Agent, events EventSink) {
+// configureToolsetHandlers installs stable request-scoped dispatchers.
+func (r *LocalRuntime) configureToolsetHandlers(a *agent.Agent) {
 	for _, toolset := range a.ToolSets() {
 		tools.ConfigureHandlers(toolset,
-			r.elicitationHandler,
-			r.samplingHandler,
-			r.samplingWithToolsHandler,
-			func() { events.Emit(Authorization(tools.ElicitationActionAccept, a.Name())) },
+			tools.ScopedElicitationHandler,
+			tools.SamplingScopeHandler,
+			tools.SamplingWithToolsScopeHandler,
+			nil,
 			r.managedOAuth,
 			r.unmanagedOAuthRedirectURI,
 		)
-
-		// Wire RAG event forwarding so the TUI shows indexing progress.
-		// Use a non-blocking sink because the RAG file watcher is a
-		// long-lived goroutine that may outlive the per-message events
-		// channel; a blocking send after the channel is closed would
-		// crash, and a blocking send when the consumer has gone away
-		// would deadlock.
-		if ragTool, ok := tools.As[ragtypes.EventForwarder](toolset); ok {
-			ragTool.SetEventCallback(ragEventForwarder(ragTool.Name(), r, nonBlocking(events).Emit))
-		}
 	}
 }
 
@@ -1692,17 +1716,15 @@ func (r *LocalRuntime) subscribePlanChanges(sess *session.Session, events EventS
 	seen := make(map[notifierIdentity]struct{})
 	var unsubs []func()
 	for _, ts := range toolsets {
-		notifier, ok := tools.As[plan.ChangeNotifier](ts)
-		if !ok {
-			continue
-		}
-		if key, identifiable := notifierDedupKey(notifier); identifiable {
-			if _, dup := seen[key]; dup {
-				continue
+		for _, notifier := range tools.FindAll[plan.ChangeNotifier](ts) {
+			if key, identifiable := notifierDedupKey(notifier); identifiable {
+				if _, dup := seen[key]; dup {
+					continue
+				}
+				seen[key] = struct{}{}
 			}
-			seen[key] = struct{}{}
+			unsubs = append(unsubs, notifier.SubscribeChanges(forward))
 		}
-		unsubs = append(unsubs, notifier.SubscribeChanges(forward))
 	}
 	return func() {
 		for _, unsub := range unsubs {
@@ -1825,7 +1847,7 @@ func toolNameMatchesAny(name string, patterns []string) bool {
 // inherited agent tools, then appends the tools from the skill's assistive
 // toolsets (which bypass the allow-list — the skill explicitly asked for
 // them). It is a no-op for ordinary sessions that set neither field.
-func (r *LocalRuntime) skillSubSessionTools(ctx context.Context, sess *session.Session, a *agent.Agent, agentTools []tools.Tool, events EventSink) []tools.Tool {
+func (r *LocalRuntime) skillSubSessionTools(ctx context.Context, sess *session.Session, a *agent.Agent, agentTools []tools.Tool) []tools.Tool {
 	if len(sess.AllowedTools) == 0 && len(sess.ExtraToolSets) == 0 {
 		return agentTools
 	}
@@ -1834,10 +1856,10 @@ func (r *LocalRuntime) skillSubSessionTools(ctx context.Context, sess *session.S
 
 	for _, ts := range sess.ExtraToolSets {
 		tools.ConfigureHandlers(ts,
-			r.elicitationHandler,
-			r.samplingHandler,
-			r.samplingWithToolsHandler,
-			func() { events.Emit(Authorization(tools.ElicitationActionAccept, a.Name())) },
+			tools.ScopedElicitationHandler,
+			tools.SamplingScopeHandler,
+			tools.SamplingWithToolsScopeHandler,
+			nil,
 			r.managedOAuth,
 			r.unmanagedOAuthRedirectURI,
 		)

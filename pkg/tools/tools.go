@@ -34,22 +34,27 @@ func NewHandler[T any](fn func(context.Context, T) (*ToolCallResult, error)) Too
 func NewRuntimeHandler[T any](fn func(context.Context, T, Runtime) (*ToolCallResult, error)) ToolHandler {
 	return func(ctx context.Context, toolCall ToolCall, rt Runtime) (*ToolCallResult, error) {
 		var params T
-		args := toolCall.Function.Arguments
-		if args == "" {
-			args = "{}"
-		}
-
-		err := aijson.Unmarshal([]byte(args), &params, aijson.OnRepair(func(kinds []aijson.Kind) {
-			slog.InfoContext(ctx, "tool_input_repaired",
-				"tool", toolCall.Function.Name,
-				"repairs", kinds,
-			)
-		}))
-		if err != nil {
+		if err := UnmarshalToolArguments(ctx, toolCall, &params); err != nil {
 			return nil, err
 		}
 		return fn(ctx, params, rt)
 	}
+}
+
+// UnmarshalToolArguments decodes tool-call arguments through the shared repair
+// path and records any repairs with the tool name.
+func UnmarshalToolArguments(ctx context.Context, toolCall ToolCall, target any) error {
+	args := toolCall.Function.Arguments
+	if args == "" {
+		args = "{}"
+	}
+
+	return aijson.Unmarshal([]byte(args), target, aijson.OnRepair(func(kinds []aijson.Kind) {
+		slog.InfoContext(ctx, "tool_input_repaired",
+			"tool", toolCall.Function.Name,
+			"repairs", kinds,
+		)
+	}))
 }
 
 // ToolHandler executes a single tool call. rt is the handle back to the
@@ -145,14 +150,18 @@ func ResultJSON(v any) *ToolCallResult {
 type ToolType string
 
 type Tool struct {
-	Name                    string          `json:"name"`
-	Category                string          `json:"category"`
-	Description             string          `json:"description,omitempty"`
-	Parameters              any             `json:"parameters"`
-	Annotations             ToolAnnotations `json:"annotations"`
-	OutputSchema            any             `json:"outputSchema"`
-	Handler                 ToolHandler     `json:"-"`
-	AddDescriptionParameter bool            `json:"-"`
+	Name         string          `json:"name"`
+	Category     string          `json:"category"`
+	Description  string          `json:"description,omitempty"`
+	Parameters   any             `json:"parameters"`
+	Annotations  ToolAnnotations `json:"annotations"`
+	OutputSchema any             `json:"outputSchema"`
+	Handler      ToolHandler     `json:"-"`
+	// RuntimeHandler identifies the host-owned handler that executes this tool.
+	// Empty means Handler owns execution, regardless of name collisions with
+	// runtime-managed tools.
+	RuntimeHandler          string `json:"-"`
+	AddDescriptionParameter bool   `json:"-"`
 	// Deferred keeps tools added after the first model call out of cached prompt prefixes.
 	Deferred             bool   `json:"-"`
 	DeferredAtToolCallID string `json:"-"`

@@ -685,13 +685,9 @@ func (t *testToolSet) Stop(context.Context) error {
 	return nil
 }
 
-// capableToolSet is a testToolSet that also implements the capability
-// interfaces codeModeTool must forward (Elicitable, Sampleable,
-// SampleableWithTools, OAuthCapable, ChangeNotifier) so tests can assert
-// that codeModeTool actually forwards to inner toolsets instead of
-// silently dropping them (the regression this file guards against: an
-// MCP toolset wrapped by code_mode_tools never got its OAuth elicitation
-// handler wired up, so its authorization dialog never surfaced).
+// capableToolSet is a testToolSet that also implements capabilities discovered
+// through the Code Mode graph. It guards against silently dropping handlers
+// for MCP toolsets nested under code_mode_tools.
 type capableToolSet struct {
 	testToolSet
 
@@ -740,19 +736,12 @@ func (c *capableToolSet) SetToolsChangedHandler(handler func()) {
 	c.toolsChangedHandler = handler
 }
 
-// TestCodeModeTool_ForwardsCapabilityHandlers verifies that codeModeTool
-// forwards elicitation, sampling, OAuth, and tool-list-changed handlers to
-// every inner toolset that supports them. Before this fix, codeModeTool
-// implemented none of these capability interfaces, so
-// tools.ConfigureHandlers (called by the runtime once per turn) could never
-// reach an MCP toolset hidden behind code_mode_tools — its OAuth
-// elicitation handler stayed nil forever and the authorization dialog
-// never surfaced.
-func TestCodeModeTool_ForwardsCapabilityHandlers(t *testing.T) {
+// TestCodeModeTool_ConfiguresCapabilityHandlers verifies that generic graph
+// traversal configures every capable child without composite-specific forwarding.
+func TestCodeModeTool_ConfiguresCapabilityHandlers(t *testing.T) {
 	t.Parallel()
 	capable := &capableToolSet{}
-	// A plain toolset without any capability must be tolerated (As returns
-	// ok=false) rather than panicking.
+	// A plain toolset without any capability must be tolerated.
 	plain := &testToolSet{}
 
 	tool := Wrap(capable, plain)
@@ -785,17 +774,17 @@ func TestCodeModeTool_ForwardsCapabilityHandlers(t *testing.T) {
 	assert.Equal(t, "http://127.0.0.1:1234/callback", capable.unmanagedOAuthRedirectURI)
 
 	changedCalled := false
-	tool.(tools.ChangeNotifier).SetToolsChangedHandler(func() { changedCalled = true })
+	for _, notifier := range tools.FindAll[tools.ChangeNotifier](tool) {
+		notifier.SetToolsChangedHandler(func() { changedCalled = true })
+	}
 	require.NotNil(t, capable.toolsChangedHandler)
 	capable.toolsChangedHandler()
 	assert.True(t, changedCalled)
 }
 
-// TestCodeModeTool_ForwardsCapabilityHandlersThroughStartableWrapper verifies
-// that the capability forwarding also finds an inner toolset wrapped in a
-// tools.StartableToolSet, matching how real MCP toolsets are wired
-// (tools.NewStartable(mcpToolset)) before being handed to codemode.Wrap.
-func TestCodeModeTool_ForwardsCapabilityHandlersThroughStartableWrapper(t *testing.T) {
+// TestCodeModeTool_ConfiguresCapabilitiesThroughStartableWrapper verifies
+// graph traversal through both composite and decorator edges.
+func TestCodeModeTool_ConfiguresCapabilitiesThroughStartableWrapper(t *testing.T) {
 	t.Parallel()
 	capable := &capableToolSet{}
 	wrapped := tools.NewStartable(capable)
@@ -805,7 +794,7 @@ func TestCodeModeTool_ForwardsCapabilityHandlersThroughStartableWrapper(t *testi
 	handler := func(context.Context, *mcp.ElicitParams) (tools.ElicitationResult, error) {
 		return tools.ElicitationResult{}, nil
 	}
-	tool.(tools.Elicitable).SetElicitationHandler(handler)
+	tools.ConfigureHandlers(tool, handler, nil, nil, nil, false, "")
 
 	assert.NotNil(t, capable.elicitationHandler)
 }

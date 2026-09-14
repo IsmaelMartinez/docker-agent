@@ -28,9 +28,9 @@ func populateScrollableRoot(t *testing.T) *appModel {
 		})
 		root.application.Session().Messages = append(root.application.Session().Messages, session.NewMessageItem(msg))
 	}
-	_ = root.chatPage.Init()
+	_ = root.activeTab.chatPage.Init()
 	root.handleWindowResize(100, 35)
-	root.chatPage.ScrollToBottom()
+	root.activeTab.chatPage.ScrollToBottom()
 	root.viewCacheValid = false
 	return root
 }
@@ -46,7 +46,7 @@ func TestEffectiveScrollInputRendersImmediately(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := populateScrollableRoot(t)
 			root.focusedPanel = PanelContent
-			_ = root.chatPage.FocusMessages()
+			_ = root.activeTab.chatPage.FocusMessages()
 			before := root.View().Content
 
 			_, _ = root.Update(tc.msg)
@@ -72,7 +72,7 @@ func TestStreamChunkRendersBeforeRecoveryClick(t *testing.T) {
 			root, _, _ := wallClockRoot(t, 120, 40)
 			seed := session.NewAgentMessage("root", &chat.Message{Role: chat.MessageRoleAssistant, Content: "first chunk"})
 			root.application.Session().Messages = append(root.application.Session().Messages, session.NewMessageItem(seed))
-			_ = root.chatPage.Init()
+			_ = root.activeTab.chatPage.Init()
 			root.viewCacheValid = false
 			_ = root.View()
 
@@ -154,7 +154,7 @@ func TestActualProgramWritesAfterEffectiveIdleInput(t *testing.T) {
 func TestNoOpPointerAndWheelReuseRootCache(t *testing.T) {
 	root, _, _ := wallClockRoot(t, 120, 40)
 	root.focusedPanel = PanelContent
-	_ = root.chatPage.FocusMessages()
+	_ = root.activeTab.chatPage.FocusMessages()
 	_, _ = root.Update(tea.KeyPressMsg{Code: 'g'}) // top boundary
 	first := root.View()
 	for range 100 {

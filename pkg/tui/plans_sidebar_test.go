@@ -13,9 +13,10 @@ import (
 	"github.com/docker/docker-agent/pkg/plans"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
-	"github.com/docker/docker-agent/pkg/tui/core/layout"
+	"github.com/docker/docker-agent/pkg/tools/builtin/plan"
 	"github.com/docker/docker-agent/pkg/tui/dialog"
 	"github.com/docker/docker-agent/pkg/tui/messages"
+	"github.com/docker/docker-agent/pkg/tui/page/chat"
 	"github.com/docker/docker-agent/pkg/tui/service/supervisor"
 )
 
@@ -191,14 +192,103 @@ func TestPlanSidebar_DisabledDuringRefreshDropsResult(t *testing.T) {
 type planSidebarTestPage struct {
 	mockChatPage
 
-	data messages.PlanSidebarDataMsg
+	data            messages.PlanSidebarDataMsg
+	snapshotEffects chat.Effects
+	eventEffects    chat.Effects
+	snapshotUpdates int
 }
 
-func (p *planSidebarTestPage) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
+func (p *planSidebarTestPage) UpdateEffects(msg tea.Msg) (chat.Page, chat.Effects) {
 	if data, ok := msg.(messages.PlanSidebarDataMsg); ok {
 		p.data = data
+		p.snapshotUpdates++
+		return p, p.snapshotEffects
 	}
-	return p, nil
+	return p, p.eventEffects
+}
+
+func TestPlanSidebar_SnapshotRespectsTabEffectVisibility(t *testing.T) {
+	t.Parallel()
+	m, _ := newPlansTestModel(t)
+	active := &planSidebarTestPage{snapshotEffects: chat.Effects{
+		Visible: func() tea.Msg { return "active-visible" },
+	}}
+	background := &planSidebarTestPage{snapshotEffects: chat.Effects{
+		Local:   func() tea.Msg { return "background-local" },
+		Global:  func() tea.Msg { return "background-global" },
+		Visible: func() tea.Msg { return "background-visible" },
+	}}
+	m.ensureTab("active").chatPage = active
+	m.ensureTab("background").chatPage = background
+	unloaded := m.ensureTab("unloaded")
+	m.activeTab = m.tabs["active"]
+	data := messages.PlanSidebarDataMsg{Result: plans.ListResult{Plans: []plans.Plan{{Name: "release"}}}}
+	msgs := collectMsgs(m.updatePlanSidebar(data))
+	assert.ElementsMatch(t, []tea.Msg{"active-visible", "background-local", "background-global"}, msgs)
+	assert.Equal(t, data, active.data)
+	assert.Equal(t, data, background.data)
+	assert.Equal(t, 1, active.snapshotUpdates)
+	assert.Equal(t, 1, background.snapshotUpdates)
+	assert.Nil(t, unloaded.chatPage, "refresh must not initialize a restored tab")
+	assert.Same(t, active, m.activeTab.chatPage)
+}
+
+func TestPlanSidebar_TabLifecycleCancelsPendingEdit(t *testing.T) {
+	t.Parallel()
+	for _, cause := range []string{"switch", "close", "recreate"} {
+		t.Run(cause, func(t *testing.T) {
+			t.Parallel()
+			m := newTabLifecycleModel(t)
+			svc := plans.NewService(plan.NewFilesystemStorage(t.TempDir()))
+			WithPlansService(svc)(m)
+			firstID := m.supervisor.ActiveID()
+			_, _ = m.handleSpawnSession("/second")
+			secondID := m.supervisor.ActiveID()
+			_, _ = m.handleSwitchTab(firstID)
+			m.layoutSettings.ShowPlans = true
+			p := mustCreatePlan(t, svc, "release", "content")
+			_, cmd := m.Update(messages.EditSidebarPlanMsg{
+				TabID: firstID, Ref: plans.SharedRef(p.Name), ExpectedVersion: *p.Version,
+			})
+			require.NotNil(t, cmd)
+			ready := cmd().(planEditReadyMsg)
+			require.NoError(t, ready.err)
+			require.NoError(t, ready.draftErr)
+			require.NotEmpty(t, ready.draftPath)
+			t.Cleanup(func() { _ = os.Remove(ready.draftPath) })
+
+			switch cause {
+			case "switch":
+				_, _ = m.handleSwitchTab(secondID)
+			case "close":
+				_, _ = m.handleCloseTab(firstID)
+			case "recreate":
+				m.initSessionComponents(firstID, m.application, m.application.Session())
+			}
+
+			assert.False(t, m.sidebarPlanEditInFlight)
+			_, cmd = m.Update(ready)
+			assert.Nil(t, cmd, "an old page must not start an editor on its replacement")
+			_, err := os.Stat(ready.draftPath)
+			assert.True(t, os.IsNotExist(err))
+		})
+	}
+}
+
+func TestPlanSidebar_RecreatedPageInheritsSharedSnapshot(t *testing.T) {
+	t.Parallel()
+	m := newTabLifecycleModel(t)
+	m.layoutSettings.ShowPlans = true
+	m.planSidebarData = messages.PlanSidebarDataMsg{Result: plans.ListResult{
+		Plans: []plans.Plan{{Name: "fresh-plan", Version: new(1)}},
+	}}
+	id := m.supervisor.ActiveID()
+	oldPage := m.activeTab.chatPage
+	m.initSessionComponents(id, m.application, m.application.Session())
+	_ = m.activeTab.chatPage.SetSize(160, 40)
+	assert.NotSame(t, oldPage, m.activeTab.chatPage)
+	assert.Same(t, m.tabs[id], m.activeTab)
+	assert.Contains(t, m.activeTab.chatPage.View(), "fresh-plan")
 }
 
 func TestPlanSidebar_BackgroundEventsUpdateEveryPage(t *testing.T) {
@@ -211,18 +301,27 @@ func TestPlanSidebar_BackgroundEventsUpdateEveryPage(t *testing.T) {
 	backgroundID := sv.AddSession(t.Context(), nil, session.New(), "", nil)
 	m.supervisor = sv
 	active, background := &planSidebarTestPage{}, &planSidebarTestPage{}
-	m.chatPages[activeID], m.chatPages[backgroundID] = active, background
-	m.chatPage = active
-	runPlanFlow(t, m, messages.RoutedMsg{
+	background.eventEffects = chat.Effects{
+		Local:   func() tea.Msg { return timerMarkerMsg{} },
+		Global:  func() tea.Msg { return globalMarkerMsg{} },
+		Visible: func() tea.Msg { return uiMarkerMsg{} },
+	}
+	m.ensureTab(activeID).chatPage = active
+	m.ensureTab(backgroundID).chatPage = background
+	m.activeTab = m.tabs[activeID]
+	msgs := runPlanFlow(t, m, messages.RoutedMsg{
 		SessionID: backgroundID,
 		Inner:     runtime.PlanChanged("shared", p.Name, "write", *p.Version, ""),
 	})
+	assert.True(t, hasMsg[timerMarkerMsg](msgs), "keep background tab work while refreshing")
+	assert.True(t, hasMsg[globalMarkerMsg](msgs), "keep existing global effects")
+	assert.False(t, hasMsg[uiMarkerMsg](msgs), "do not dispatch hidden-page UI effects")
 	for _, page := range []*planSidebarTestPage{active, background} {
 		require.Len(t, page.data.Result.Plans, 1)
 		assert.Equal(t, p.Name, page.data.Result.Plans[0].Name)
 		assert.False(t, page.data.Loading)
 	}
-	assert.Same(t, active, m.chatPage)
+	assert.Same(t, active, m.activeTab.chatPage)
 	assert.False(t, m.planDialogOpen())
 }
 

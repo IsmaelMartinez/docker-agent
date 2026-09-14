@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 
@@ -80,6 +79,15 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			clientOptions = append(clientOptions,
 				option.WithAPIKey(""),
 				option.WithMiddleware(chatgptAuthMiddleware(tokenSource)),
+			)
+		case globalOptions.TokenSource() != nil:
+			tokenSource := globalOptions.TokenSource()
+			if _, err := tokenSource(ctx); err != nil {
+				return nil, fmt.Errorf("resolving access token: %w", err)
+			}
+			clientOptions = append(clientOptions,
+				option.WithAPIKey(""),
+				option.WithMiddleware(tokenAuthMiddleware(tokenSource)),
 			)
 		case cfg.TokenKey != "":
 			// Explicit token_key configured - use that env var
@@ -156,31 +164,18 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 
 		// When using a Gateway, tokens are short-lived.
 		clientFn = func(ctx context.Context) (*openai.Client, error) {
-			// Query a fresh auth token each time the client is used.
-			authToken, err := base.GatewayAuthToken(ctx, env, gateway)
+			connection, err := base.NewGatewayClient(ctx, env, gateway, "https://api.openai.com/v1", "/v1/", cfg, &globalOptions)
 			if err != nil {
 				return nil, err
 			}
 
-			url, err := url.Parse(gateway)
-			if err != nil {
-				return nil, fmt.Errorf("invalid gateway URL: %w", err)
-			}
-			baseURL := fmt.Sprintf("%s://%s%s/v1/", url.Scheme, url.Host, url.Path)
-
-			// Configure a custom HTTP client to inject headers and query params used by the Gateway.
-			httpOptions := base.GatewayHTTPOptions(url, "https://api.openai.com/v1", cfg, &globalOptions)
-			httpOptions = append(httpOptions, base.GatewayAuthRetry(env, gateway)...)
-
-			gatewayHTTPClient := httpclient.NewHTTPClient(ctx, httpOptions...)
-			globalOptions.WrapTransport(ctx, gatewayHTTPClient)
 			clientOptions := []option.RequestOption{
-				option.WithBaseURL(baseURL),
-				option.WithHTTPClient(gatewayHTTPClient),
+				option.WithBaseURL(connection.BaseURL),
+				option.WithHTTPClient(connection.HTTPClient),
 				option.WithMiddleware(oaistream.ErrorBodyMiddleware()),
 			}
-			if authToken != "" {
-				clientOptions = append(clientOptions, option.WithAPIKey(authToken))
+			if connection.AuthToken != "" {
+				clientOptions = append(clientOptions, option.WithAPIKey(connection.AuthToken))
 			}
 			client := openai.NewClient(clientOptions...)
 
@@ -871,7 +866,13 @@ func (c *Client) buildWSHeaderFn() func(ctx context.Context) (http.Header, error
 
 		// Resolve the API key using the same logic as the HTTP client.
 		var apiKey string
-		if c.ModelConfig.TokenKey != "" {
+		if source := c.ModelOptions.TokenSource(); source != nil {
+			var err error
+			apiKey, err = source(ctx)
+			if err != nil {
+				return nil, err
+			}
+		} else if c.ModelConfig.TokenKey != "" {
 			apiKey, _ = authTokenForTokenKey(ctx, &c.ModelConfig, c.Env)
 		}
 		if apiKey == "" {

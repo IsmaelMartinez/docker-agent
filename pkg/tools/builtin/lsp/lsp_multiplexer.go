@@ -2,7 +2,6 @@ package lsp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -35,6 +34,7 @@ type lspRouteTarget struct {
 // Verify interface compliance.
 var (
 	_ tools.ToolSet      = (*Multiplexer)(nil)
+	_ tools.Composite    = (*Multiplexer)(nil)
 	_ tools.Startable    = (*Multiplexer)(nil)
 	_ tools.Instructable = (*Multiplexer)(nil)
 )
@@ -43,6 +43,15 @@ var (
 // to the appropriate backend based on file type.
 func NewLSPMultiplexer(backends []Backend) *Multiplexer {
 	return &Multiplexer{backends: slices.Clone(backends)}
+}
+
+// Children exposes the configured backend wrappers for capability discovery.
+func (m *Multiplexer) Children() []tools.ToolSet {
+	children := make([]tools.ToolSet, 0, len(m.backends))
+	for _, backend := range m.backends {
+		children = append(children, backend.Toolset)
+	}
+	return children
 }
 
 func (m *Multiplexer) Start(ctx context.Context) error {
@@ -145,7 +154,7 @@ func routeByFile(handlers []lspRouteTarget) tools.ToolHandler {
 		var args struct {
 			File string `json:"file"`
 		}
-		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+		if err := tools.UnmarshalToolArguments(ctx, tc, &args); err != nil {
 			return tools.ResultError(fmt.Sprintf("failed to parse file argument: %s", err)), nil
 		}
 		if args.File == "" {

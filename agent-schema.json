@@ -114,7 +114,7 @@
     },
     "runtime": {
       "$ref": "#/definitions/RuntimeDefaults",
-      "description": "Execution-time defaults the agent author wants applied. Values act as defaults only — explicit CLI flags or user-config settings always win."
+      "description": "Execution-time defaults the agent author wants applied. Values act as defaults only \u2014 explicit CLI flags or user-config settings always win."
     },
     "budget": {
       "$ref": "#/definitions/BudgetConfig",
@@ -129,9 +129,12 @@
     },
     "flavors": {
       "type": "object",
-      "description": "Named YAML patches applied on top of the rest of the document when enabled at run time (e.g. 'docker agent run --flavor <name>'). Each flavor is a partial config document merged with JSON Merge Patch semantics: objects merge recursively, scalars and arrays replace, null deletes a key. A key ending in '+' appends its items to the existing array (e.g. 'toolsets+:'); a scalar existing value is promoted to a one-element array first, so 'instruction+:' extends a string instruction. A key ending in '-' removes entries — from an object by key name, from an array by scalar equality or partial object match (e.g. 'toolsets-: [{type: shell}]'). Enabled flavors are applied in the order they were requested; requested flavors not defined here are ignored.",
+      "description": "Named YAML patches applied on top of the rest of the document when enabled at run time (e.g. 'docker agent run --flavor <name>'). Each flavor is a partial config document merged with JSON Merge Patch semantics: objects merge recursively, scalars and arrays replace, null deletes a key. A key ending in '+' appends its items to the existing array (e.g. 'toolsets+:'); a scalar existing value is promoted to a one-element array first, so 'instruction+:' extends a string instruction. A key ending in '-' removes entries \u2014 from an object by key name, from an array by scalar equality or partial object match (e.g. 'toolsets-: [{type: shell}]'). Enabled flavors are applied in the order they were requested; requested flavors not defined here are ignored.",
       "additionalProperties": {
-        "type": ["object", "null"]
+        "type": [
+          "object",
+          "null"
+        ]
       }
     }
   },
@@ -679,7 +682,7 @@
             "restricted",
             "autonomous"
           ],
-          "description": "Safety mode new sessions started on this agent default to when the user has not chosen one (no --safety/--yolo flag, no alias option, no user-config setting). Takes precedence over the config-wide runtime.safety. A default only: it never overrides a user choice and never replaces the mode stored on a resumed session. 'restricted' is the fail-closed profile for unattended runs: safe calls auto-approve, every other unmatched call is denied without prompting. Trust warning: 'autonomous' auto-approves every tool call — review configs from URLs or OCI registries before running them."
+          "description": "Safety mode new sessions started on this agent default to when the user has not chosen one (no --safety/--yolo flag, no alias option, no user-config setting). Takes precedence over the config-wide runtime.safety. A default only: it never overrides a user choice and never replaces the mode stored on a resumed session. 'restricted' is the fail-closed profile for unattended runs: safe calls auto-approve, every other unmatched call is denied without prompting. Trust warning: 'autonomous' auto-approves every tool call \u2014 review configs from URLs or OCI registries before running them."
         },
         "redact_secrets": {
           "type": "boolean",
@@ -1434,7 +1437,7 @@
         },
         "type": {
           "type": "string",
-          "description": "Type of hook. 'command' executes a shell command; 'builtin' invokes a named in-process Go function registered by the runtime; 'model' asks an LLM and translates its reply into the hook's native output (used for LLM-as-a-judge pre_tool_use, summarizers, etc., with no Go code). The docker-agent runtime ships these builtins: 'add_context' (context-contributing events: renders Go templates in args against hook input and joins non-empty results with newlines as additional context), 'add_date' (turn_start: today's date), 'add_environment_info' (session_start: cwd, git, OS, arch), 'add_prompt_files' (turn_start: contents of named files looked up in the workdir hierarchy and the home directory; args may include '--depth=<N>' to additionally list, by path only, the same filenames found up to N levels below the working directory), 'add_git_status' (turn_start: `git status --short --branch`), 'add_git_diff' (turn_start: `git diff --stat`, or full diff with args=['full']), 'add_directory_listing' (session_start: top-level entries of cwd), 'add_user_info' (session_start: current OS user and hostname), 'add_recent_commits' (session_start: `git log --oneline -n N`, default N=10, override via args=['<N>']), 'max_iterations' (before_llm_call: hard stop after N model calls; args=['<N>'] required), 'redact_secrets' (tool_input_transform or pre_tool_use / before_llm_call / tool_response_transform: scrubs detected secrets from tool arguments, outgoing chat content, and tool output \u2014 the same builtin handles all three legs and dispatches on the event; the matching agent-level 'redact_secrets: true' flag auto-injects the entries on tool_input_transform, before_llm_call, and tool_response_transform), 'unload' (on_agent_switch: POSTs `{\"model\": \"<id>\"}` to the previous agent's DMR model endpoints \u2014 e.g. asks Docker Model Runner to release the GPU/RAM held by the just-departing model so the next agent's model can claim it. Pure HTTP, no provider-specific runtime coupling; non-DMR providers are silently skipped. Opt in by adding the entry to the agent's hooks.on_agent_switch list).",
+          "description": "Type of hook. 'command' executes a shell command; 'builtin' invokes a named in-process Go function registered by the runtime; 'model' asks an LLM and translates its reply into the hook's native output (used for LLM-as-a-judge pre_tool_use, summarizers, etc., with no Go code). The docker-agent runtime ships these builtins: 'add_context' (context-contributing events: renders Go templates in args against hook input and joins non-empty results with newlines as additional context), 'add_date' (turn_start: today's date), 'add_environment_info' (session_start: cwd, git, OS, arch), 'add_prompt_files' (turn_start: contents of named files looked up in the workdir hierarchy and the home directory; args may include '--depth=<N>' to additionally list, by path only, the same filenames found up to N levels below the working directory), 'add_git_status' (turn_start: `git status --short --branch`), 'add_git_diff' (turn_start: `git diff --stat`, or full diff with args=['full']), 'add_directory_listing' (session_start: top-level entries of cwd), 'add_user_info' (session_start: current OS user and hostname), 'add_recent_commits' (session_start: `git log --oneline -n N`, default N=10, override via args=['<N>']), 'max_iterations' (before_llm_call: hard stop after N model calls; args=['<N>'] required), 'redact_secrets' (tool_input_transform or pre_tool_use / before_llm_call / tool_response_transform: scrubs detected secrets from tool arguments, outgoing chat content, and tool output \u2014 the same builtin handles all three legs and dispatches on the event; the matching agent-level 'redact_secrets: true' flag auto-injects the entries on tool_input_transform, before_llm_call, and tool_response_transform), 'limit_large_tool_results' (tool_response_transform and session_end: stores oversized tool output in a per-session temp file and replaces it with a bounded excerpt; always injected by the runtime), 'safer_shell' (pre_tool_use: deprecated compatibility shim that attaches shell safety classification metadata), 'http_post' (any event: POSTs args[1] to the URL in args[0]), 'snapshot' (session_start, turn_start, turn_end, pre_tool_use, post_tool_use, and session_end: records filesystem snapshots in a shadow git repository), 'unload' (on_agent_switch: POSTs `{\"model\": \"<id>\"}` to the previous agent's DMR model endpoints \u2014 e.g. asks Docker Model Runner to release the GPU/RAM held by the just-departing model so the next agent's model can claim it. Pure HTTP, no provider-specific runtime coupling; non-DMR providers are silently skipped. Opt in by adding the entry to the agent's hooks.on_agent_switch list).",
           "enum": [
             "command",
             "builtin",
@@ -1928,7 +1931,7 @@
             "restricted",
             "autonomous"
           ],
-          "description": "Safety mode new sessions default to when the user has not chosen one (no --safety/--yolo flag, no alias option, no user-config setting). A per-agent 'safety' takes precedence over this config-wide default. A default only: it never overrides a user choice and never replaces the mode stored on a resumed session. 'restricted' is the fail-closed profile for unattended runs: safe calls auto-approve, every other unmatched call is denied without prompting. Trust warning: 'autonomous' auto-approves every tool call — review configs from URLs or OCI registries before running them."
+          "description": "Safety mode new sessions default to when the user has not chosen one (no --safety/--yolo flag, no alias option, no user-config setting). A per-agent 'safety' takes precedence over this config-wide default. A default only: it never overrides a user choice and never replaces the mode stored on a resumed session. 'restricted' is the fail-closed profile for unattended runs: safe calls auto-approve, every other unmatched call is denied without prompting. Trust warning: 'autonomous' auto-approves every tool call \u2014 review configs from URLs or OCI registries before running them."
         }
       },
       "additionalProperties": false
@@ -1959,7 +1962,7 @@
         "max_time": {
           "type": "string",
           "description": "Maximum time the agents spend working, in Go duration format (e.g., '10m', '30s', '1h30m'). This is the sum of turn durations, NOT wall-clock since the session opened, so idle time while the user reads and types does not count. Checked at turn boundaries, so it will not interrupt an in-flight model call or tool.",
-          "pattern": "^([0-9]+(ns|us|µs|ms|s|m|h))+$",
+          "pattern": "^([0-9]+(ns|us|\u00b5s|ms|s|m|h))+$",
           "examples": [
             "30s",
             "10m",
@@ -2208,7 +2211,8 @@
             "scheduler",
             "rag",
             "git",
-            "webhook"
+            "webhook",
+            "environment"
           ]
         },
         "instruction": {
@@ -2535,7 +2539,7 @@
                 "background_jobs",
                 "tasks",
                 "plan",
-                    "session_context",
+                "session_context",
                 "todo",
                 "fetch",
                 "api",

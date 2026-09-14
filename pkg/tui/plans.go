@@ -937,7 +937,7 @@ func planWarningsCmds(warnings []string) []tea.Cmd {
 // not depend on which session emitted the event.
 func (m *appModel) handlePlanChangedEvent(msg *runtime.PlanChangedEvent) (tea.Model, tea.Cmd) {
 	if name := msg.GetAgentName(); name != "" {
-		m.sessionState.SetCurrentAgentName(name)
+		m.activeTab.sessionState.SetCurrentAgentName(name)
 	}
 	chatCmd := m.updateChatCmd(msg)
 	var refresh tea.Cmd

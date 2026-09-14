@@ -4,7 +4,6 @@ package a2a
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -242,7 +241,7 @@ func (t *Toolset) createHandler() tools.ToolHandler {
 		var args struct {
 			Message string `json:"message"`
 		}
-		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
+		if err := tools.UnmarshalToolArguments(ctx, toolCall, &args); err != nil {
 			return nil, fmt.Errorf("failed to parse arguments: %w", err)
 		}
 

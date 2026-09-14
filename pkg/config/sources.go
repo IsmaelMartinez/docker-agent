@@ -369,7 +369,7 @@ func (a urlSource) read(ctx context.Context, cacheDir, cachePath, etagPath, encP
 	client := httpclient.NewHTTPClient(ctx)
 	if !a.unsafe {
 		if isLocalhostHTTP(a.url) {
-			client = &http.Client{
+			client = &http.Client{ //rubocop:disable Lint/HTTPClientTransport // localhost-only: SSRF guards not needed; standard transport is correct
 				Timeout:       60 * time.Second,
 				CheckRedirect: httpclient.LocalhostOnlyRedirects(10),
 			}

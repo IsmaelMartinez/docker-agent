@@ -85,11 +85,8 @@ func TestCloneWithOptions_RouterWithModelReferences(t *testing.T) {
 	router, err := fullTestRegistry().NewWithModels(t.Context(), routerCfg, models, env)
 	require.NoError(t, err)
 
-	// Verify the original router has the models map stored
-	baseConfig := router.BaseConfig()
-	require.NotNil(t, baseConfig.Models, "Router should store models map in base config")
-
-	// Clone with max tokens option - this should succeed and not fall back to original
+	// The clone must retain the captured model map so named routing targets
+	// remain resolvable.
 	newMaxTokens := int64(4096)
 	cloned := CloneWithOptions(t.Context(), router, options.WithMaxTokens(newMaxTokens))
 
@@ -98,9 +95,11 @@ func TestCloneWithOptions_RouterWithModelReferences(t *testing.T) {
 	require.NotNil(t, clonedConfig.ModelConfig.MaxTokens)
 	assert.Equal(t, newMaxTokens, *clonedConfig.ModelConfig.MaxTokens)
 
-	// Also verify the models map is preserved in the clone
-	assert.NotNil(t, clonedConfig.Models, "Cloned router should preserve models map")
-	assert.Equal(t, models, clonedConfig.Models, "Models map should be identical after cloning")
+	// A matched named target proves that the clone retained the router's model map.
+	stream, err := cloned.CreateChatCompletionStream(t.Context(), []chat.Message{{Role: chat.MessageRoleUser, Content: "analyze this"}}, nil)
+	require.NoError(t, err)
+	defer stream.Close()
+	drainStream(t, stream)
 }
 
 func TestCloneWithOptions_DirectProvider(t *testing.T) {
