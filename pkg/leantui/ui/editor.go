@@ -76,6 +76,25 @@ func (e *Editor) Insert(runes []rune) {
 
 func (e *Editor) InsertNewline() { e.Insert([]rune{'\n'}) }
 
+func (e *Editor) ReplaceCurrentWord(s string) {
+	start := e.cursor
+	for start > 0 && isWordRune(e.value[start-1]) {
+		start--
+	}
+	end := e.cursor
+	for end < len(e.value) && isWordRune(e.value[end]) {
+		end++
+	}
+
+	replacement := []rune(s)
+	next := make([]rune, 0, len(e.value)-(end-start)+len(replacement))
+	next = append(next, e.value[:start]...)
+	next = append(next, replacement...)
+	next = append(next, e.value[end:]...)
+	e.value = next
+	e.cursor = start + len(replacement)
+}
+
 func (e *Editor) Backspace() {
 	if e.cursor == 0 {
 		return

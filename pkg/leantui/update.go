@@ -151,6 +151,10 @@ func (m *model) handleInterrupt() {
 func (m *model) handleEnter(ctx context.Context) {
 	if m.screen.Autocomplete.Active {
 		if cmd, ok := m.screen.Autocomplete.Current(); ok {
+			if m.screen.Autocomplete.IsFileCompletion() {
+				m.completeFile(cmd)
+				return
+			}
 			completion := m.screen.Autocomplete.Completion(cmd)
 			m.screen.Autocomplete.Dismiss()
 			m.submitEditor(ctx, completion)
@@ -165,9 +169,22 @@ func (m *model) handleTab() {
 		return
 	}
 	if cmd, ok := m.screen.Autocomplete.Current(); ok {
+		if m.screen.Autocomplete.IsFileCompletion() {
+			m.completeFile(cmd)
+			return
+		}
 		m.screen.Editor.SetText(m.screen.Autocomplete.Completion(cmd) + " ")
 		m.screen.Autocomplete.Sync(m.screen.Editor.Text())
 	}
+}
+
+func (m *model) completeFile(cmd ui.Command) {
+	value := cmd.Value
+	if value == "" {
+		value = "@" + cmd.Name
+	}
+	m.screen.Editor.ReplaceCurrentWord(value + " ")
+	m.screen.Autocomplete.Dismiss()
 }
 
 func (m *model) handleCycleThinkingLevel(ctx context.Context) {
