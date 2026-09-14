@@ -1484,7 +1484,15 @@ func (m *model) ensureAllItemsRendered() {
 		return
 	}
 
-	var allLines []string
+	// Cached heights avoid repeatedly growing the flattened history buffer.
+	lineCapacity := len(m.views)
+	m.renderedItems.Range(func(index int, item renderedItem) bool {
+		if item.segments == nil || index != len(m.views)-1 {
+			lineCapacity += item.height
+		}
+		return true
+	})
+	allLines := make([]string, 0, lineCapacity)
 	m.activeSegments = nil
 	offsets := make([]int, len(m.views))
 	virtualHeight := 0
