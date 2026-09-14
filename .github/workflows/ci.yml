@@ -2,8 +2,9 @@
 #
 # `gate` is the only check the main ruleset needs to require: it fails when any
 # job it needs failed or was cancelled and passes when they succeeded or were
-# skipped (docs-only PRs skip every Go job). Add a job to
-# `gate.needs` to make it blocking; the ruleset never has to change.
+# skipped (docs-only PRs skip every Go job; a main push whose SHA already
+# passed the merge queue skips them too). Add a job to `gate.needs` to make it
+# blocking; the ruleset never has to change.
 name: ci
 
 permissions:
@@ -39,16 +40,24 @@ on:
   merge_group:
 
 jobs:
-  # Docs-only PRs (every changed file under docs/) skip the Go jobs. Markdown
-  # elsewhere is test data, so only docs/ counts. Anything but a PR runs all.
+  # Decides what the run has to do:
+  #   code    false on docs-only PRs (every changed file under docs/), which
+  #           skip the Go jobs. Markdown elsewhere is test data, so only docs/
+  #           counts. Anything but a PR runs all.
+  #   tested  true on a main push whose commit already passed a merge-queue
+  #           run of this workflow: the queue tested this exact SHA minutes
+  #           ago, so the push only builds and publishes. A push that bypassed
+  #           the queue (no green merge_group run for the SHA) runs everything.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     outputs:
       code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.docs_count != steps.filter.outputs.all_count }}
+      tested: ${{ steps.queue.outputs.tested == 'true' }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
@@ -60,8 +69,30 @@ jobs:
             all:
               - '**'
 
+      - name: Look for a green merge-queue run of this commit
+        id: queue
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          WORKFLOW_PATH: ${{ github.workflow_ref }}
+        run: |
+          # workflow_ref is owner/repo/.github/workflows/ci.yml@refs/heads/main
+          workflow_file="${WORKFLOW_PATH#"$GH_REPO"/}"
+          workflow_file="${workflow_file%@*}"
+          # shellcheck disable=SC2016 # $file is a jq variable
+          runs=$(gh api "repos/$GH_REPO/actions/runs?event=merge_group&head_sha=$GITHUB_SHA&status=success&per_page=20" \
+            | jq --arg file "$workflow_file" '[.workflow_runs[] | select(.path == $file)] | length')
+          if [[ "$runs" -gt 0 ]]; then
+            echo "tested=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${GITHUB_SHA} passed the merge queue; lint and test jobs are skipped on this push"
+          else
+            echo "tested=false" >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
-    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+    needs: changes
+    if: needs.changes.outputs.tested != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -118,7 +149,7 @@ jobs:
 
   test-linux:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tested != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -150,7 +181,7 @@ jobs:
   # full suite also runs natively on Windows.
   test-windows:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tested != 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -185,7 +216,7 @@ jobs:
   # Compile-only checks kept out of `test-linux` so they run alongside it.
   cross-compile:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tested != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -203,9 +234,7 @@ jobs:
 
   licenses:
     needs: changes
-    if: >-
-      needs.changes.outputs.code == 'true' &&
-      (github.event_name != 'push' || github.ref != 'refs/heads/main')
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tested != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

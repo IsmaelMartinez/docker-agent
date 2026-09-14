@@ -121,7 +121,8 @@ Before marking work as complete:
 - `ci / gate` is the single required status check on `main`. It needs every
   blocking job; to make a new job blocking, add it to `gate.needs` in
   `.github/workflows/ci.yml` — the ruleset does not change. Docs-only PRs
-  (only `docs/**` changed) skip the Go jobs; `gate` treats skipped as passed
+  (only `docs/**` changed) skip the Go jobs, and so does a `main` push whose
+  SHA already passed a merge-queue run; `gate` treats skipped as passed
 - `report-main-failures` runs after the test jobs on failed pushes to the
   canonical repository's `main` branch. It files deduplicated Bug issues using
   the required `flaky-test` label, assigns them to `dgageot`, and throttles
