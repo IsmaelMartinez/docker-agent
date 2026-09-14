@@ -50,20 +50,27 @@ type EventCallback = ragtypes.EventCallback
 type ToolSet struct {
 	manager       *rag.Manager
 	toolName      string
-	eventCallback EventCallback
+	subscribers   tools.Subscribers[ragtypes.Event]
 	cancelWatcher context.CancelFunc
 	wg            sync.WaitGroup
 	// indexingTimeout bounds a single Initialize call. Zero means unbounded.
 	// Resolved once by the caller (config.RAGConfig.GetIndexingTimeout()); the
 	// zero value here is a plain Go zero, not "apply the default".
 	indexingTimeout time.Duration
+
+	// legacyMu guards unsubLegacy, the subscription that backs the single-slot
+	// SetEventCallback API on top of the fan-out registry.
+	legacyMu    sync.Mutex
+	unsubLegacy func()
 }
 
 // Verify interface compliance.
 var (
-	_ tools.ToolSet      = (*ToolSet)(nil)
-	_ tools.Instructable = (*ToolSet)(nil)
-	_ tools.Startable    = (*ToolSet)(nil)
+	_ tools.ToolSet            = (*ToolSet)(nil)
+	_ tools.Instructable       = (*ToolSet)(nil)
+	_ tools.Startable          = (*ToolSet)(nil)
+	_ ragtypes.EventForwarder  = (*ToolSet)(nil)
+	_ ragtypes.EventSubscriber = (*ToolSet)(nil)
 )
 
 // Option configures optional ToolSet behavior.
@@ -95,10 +102,21 @@ func (t *ToolSet) Name() string {
 	return t.toolName
 }
 
-// SetEventCallback sets a callback to receive RAG manager events during
-// initialization. Must be called before Start().
+// SetEventCallback replaces the single legacy callback receiving RAG manager
+// events; nil clears it. Hosts sharing the toolset should use SubscribeEvents.
 func (t *ToolSet) SetEventCallback(cb EventCallback) {
-	t.eventCallback = cb
+	t.legacyMu.Lock()
+	defer t.legacyMu.Unlock()
+	if t.unsubLegacy != nil {
+		t.unsubLegacy()
+	}
+	t.unsubLegacy = t.subscribers.Subscribe(cb)
+}
+
+// SubscribeEvents registers cb to receive RAG manager events until the
+// returned function is called. Safe before or after Start.
+func (t *ToolSet) SubscribeEvents(cb EventCallback) func() {
+	return t.subscribers.Subscribe(cb)
 }
 
 // Start initializes the RAG manager (indexes documents) and starts a
@@ -123,8 +141,10 @@ func (t *ToolSet) Start(ctx context.Context) error {
 	watchCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	t.cancelWatcher = cancel
 
-	// Forward RAG manager events if a callback is set.
-	if t.eventCallback != nil {
+	// Forward manager events for as long as the toolset runs: subscribers
+	// come and go with runtime streams, so the drain must not depend on
+	// one being present at Start.
+	if t.manager.Events() != nil {
 		t.wg.Go(func() {
 			t.forwardEvents(watchCtx)
 		})
@@ -171,7 +191,7 @@ func (t *ToolSet) Stop(_ context.Context) error {
 	return t.manager.Close()
 }
 
-// forwardEvents reads events from the RAG manager and forwards them via the callback.
+// forwardEvents fans events from the RAG manager out to current subscribers.
 func (t *ToolSet) forwardEvents(ctx context.Context) {
 	for {
 		select {
@@ -181,7 +201,7 @@ func (t *ToolSet) forwardEvents(ctx context.Context) {
 			if !ok {
 				return
 			}
-			t.eventCallback(event)
+			t.subscribers.Notify(event)
 		}
 	}
 }

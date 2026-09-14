@@ -176,8 +176,8 @@ type Runtime interface {
 
 	// OnToolsChanged registers a handler invoked outside of any RunStream
 	// when a toolset reports a tool list change (e.g. after an MCP
-	// ToolListChanged notification). Runtimes that don't emit such events
-	// can implement this as a no-op.
+	// ToolListChanged notification). A nil handler unregisters. Runtimes
+	// that don't emit such events can implement this as a no-op.
 	OnToolsChanged(handler func(Event))
 
 	// OnBackgroundEvent registers a handler invoked outside of any RunStream
@@ -360,9 +360,12 @@ type LocalRuntime struct {
 	// onToolsChanged is called when an MCP toolset reports a tool list
 	// change. Protected by toolsChangedMu because MCP change-notification
 	// goroutines call emitToolsChanged concurrently, mirroring
-	// onBackgroundEvent/backgroundEventMu below.
-	toolsChangedMu sync.RWMutex
-	onToolsChanged func(Event)
+	// onBackgroundEvent/backgroundEventMu below. toolsChangedUnsubs holds
+	// this runtime's subscriptions on ChangeSubscriber toolsets, released
+	// on re-registration and at Close.
+	toolsChangedMu     sync.RWMutex
+	onToolsChanged     func(Event)
+	toolsChangedUnsubs []func()
 
 	// onBackgroundEvent is called for events surfaced from detached
 	// background work (e.g. background agent tasks). Protected by
@@ -1536,6 +1539,7 @@ func (r *LocalRuntime) SessionStore() session.Store {
 // when their process is shutting down.
 func (r *LocalRuntime) Close() error {
 	r.bgAgents.StopAll()
+	r.OnToolsChanged(nil)
 	return nil
 }
 
@@ -1571,22 +1575,22 @@ func (r *LocalRuntime) ResetStartupInfo() {
 
 // OnToolsChanged registers a handler that is called when an MCP toolset
 // reports a tool list change outside of a RunStream. This allows the UI
-// to update the tool count immediately.
+// to update the tool count immediately. The runtime subscribes to the
+// team's toolsets on behalf of the handler, replacing only its own previous
+// subscriptions so runtimes sharing a toolset do not displace each other;
+// a nil handler unsubscribes.
 func (r *LocalRuntime) OnToolsChanged(handler func(Event)) {
 	r.toolsChangedMu.Lock()
 	r.onToolsChanged = handler
+	previous := r.toolsChangedUnsubs
+	r.toolsChangedUnsubs = nil
+	if handler != nil {
+		r.toolsChangedUnsubs = r.subscribeToolsChanged()
+	}
 	r.toolsChangedMu.Unlock()
 
-	for _, name := range r.team.AgentNames() {
-		a, err := r.team.Agent(name)
-		if err != nil {
-			continue
-		}
-		for _, ts := range a.ToolSets() {
-			for _, n := range tools.FindAll[tools.ChangeNotifier](ts) {
-				n.SetToolsChangedHandler(r.emitToolsChanged)
-			}
-		}
+	for _, unsub := range previous {
+		unsub()
 	}
 }
 

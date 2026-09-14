@@ -60,10 +60,12 @@ type ToolSet struct {
 
 // Verify interface compliance
 var (
-	_ tools.ToolSet       = (*ToolSet)(nil)
-	_ tools.Startable     = (*ToolSet)(nil)
-	_ tools.Instructable  = (*ToolSet)(nil)
-	_ tools.StartReporter = (*ToolSet)(nil)
+	_ tools.ToolSet          = (*ToolSet)(nil)
+	_ tools.Startable        = (*ToolSet)(nil)
+	_ tools.Instructable     = (*ToolSet)(nil)
+	_ tools.StartReporter    = (*ToolSet)(nil)
+	_ tools.ChangeNotifier   = (*ToolSet)(nil)
+	_ tools.ChangeSubscriber = (*ToolSet)(nil)
 )
 
 type lspHandler struct {
@@ -83,8 +85,10 @@ type lspHandler struct {
 	// toolsChangedHandler is called after the supervisor's Connect has
 	// populated h.capabilities, so the runtime can re-fetch the (now
 	// capability-filtered) tool list. nil until SetToolsChangedHandler is
-	// called.
+	// called. toolsChangedSubs holds the per-runtime subscriptions
+	// notified alongside it.
 	toolsChangedHandler func()
+	toolsChangedSubs    tools.ChangeSubscribers
 
 	// Configuration
 	command    string
@@ -572,6 +576,10 @@ func (t *ToolSet) SetToolsChangedHandler(handler func()) {
 	t.handler.mu.Lock()
 	defer t.handler.mu.Unlock()
 	t.handler.toolsChangedHandler = handler
+}
+
+func (t *ToolSet) SubscribeToolsChanged(handler func()) func() {
+	return t.handler.toolsChangedSubs.Subscribe(handler)
 }
 
 // allLSPTools returns the full catalogue of LSP tools backed by h. It is

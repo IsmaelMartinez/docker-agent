@@ -189,8 +189,10 @@ type Toolset struct {
 
 	// toolsChangedHandler is called after the tool cache is refreshed
 	// following a ToolListChanged notification from the server, or after
-	// a successful supervisor reconnect.
+	// a successful supervisor reconnect. Single legacy slot; toolsChangedSubs
+	// holds the per-runtime subscriptions notified alongside it.
 	toolsChangedHandler func()
+	toolsChangedSubs    tools.ChangeSubscribers
 }
 
 // invalidateCache clears the cached tools and prompts and bumps the
@@ -218,6 +220,7 @@ var (
 	_ tools.SampleableWithTools = (*Toolset)(nil)
 	_ tools.OAuthCapable        = (*Toolset)(nil)
 	_ tools.ChangeNotifier      = (*Toolset)(nil)
+	_ tools.ChangeSubscriber    = (*Toolset)(nil)
 )
 
 // NewToolsetCommand creates a new MCP toolset from a command.
@@ -716,6 +719,7 @@ func (ts *Toolset) refreshToolCache(ctx context.Context) {
 	if handler != nil {
 		handler()
 	}
+	ts.toolsChangedSubs.Notify()
 }
 
 // refreshPromptCache fetches the prompt list from the server and populates
@@ -963,6 +967,10 @@ func (ts *Toolset) SetToolsChangedHandler(handler func()) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	ts.toolsChangedHandler = handler
+}
+
+func (ts *Toolset) SubscribeToolsChanged(handler func()) func() {
+	return ts.toolsChangedSubs.Subscribe(handler)
 }
 
 // ListPrompts retrieves available prompts from the MCP server.
