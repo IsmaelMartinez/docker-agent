@@ -37,15 +37,12 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"github.com/docker/docker-agent/pkg/chat"
 	"github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/environment"
 	"github.com/docker/docker-agent/pkg/model/provider/anthropic/vertex"
-	"github.com/docker/docker-agent/pkg/model/provider/base"
+	"github.com/docker/docker-agent/pkg/model/provider/contracts"
 	"github.com/docker/docker-agent/pkg/model/provider/openai"
 	"github.com/docker/docker-agent/pkg/model/provider/options"
-	"github.com/docker/docker-agent/pkg/modelsdev"
-	"github.com/docker/docker-agent/pkg/tools"
 )
 
 // cloudPlatformScope is the OAuth2 scope required for Vertex AI API access.
@@ -56,14 +53,9 @@ const cloudPlatformScope = "https://www.googleapis.com/auth/cloud-platform"
 // Locations: lowercase letters, digits, hyphens (e.g. us-central1).
 var validGCPIdentifier = regexp.MustCompile(`^[a-z][a-z0-9-]{1,29}$`)
 
-// Client is the subset of provider.Provider returned by NewClient. Both
-// anthropic.Client and openai.Client satisfy it, so the caller can treat
-// the two Model Garden code paths uniformly.
-type Client interface {
-	ID() modelsdev.ID
-	CreateChatCompletionStream(ctx context.Context, messages []chat.Message, tools []tools.Tool) (chat.MessageStream, error)
-	BaseConfig() base.Config
-}
+// Client is the canonical provider contract returned by NewClient. Both
+// anthropic.Client and openai.Client satisfy it.
+type Client = contracts.Provider
 
 // IsModelGardenConfig returns true when the ModelConfig describes a
 // non-Gemini model on Vertex AI (i.e. the "publisher" provider_opt is set
