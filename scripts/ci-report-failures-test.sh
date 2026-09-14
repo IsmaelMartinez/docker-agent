@@ -39,33 +39,52 @@ if [ "$1" = api ] && [[ "$*" == *'/actions/runs/123/jobs?per_page=100'* ]]; then
   exit 0
 fi
 
-if [ "$1 $2" = 'run view' ]; then
-  case "$7" in
+if [ "$1" = api ] && [[ "$2" == repos/docker/docker-agent/actions/jobs/*/logs ]]; then
+  job_id="${2#repos/docker/docker-agent/actions/jobs/}"
+  job_id="${job_id%/logs}"
+  case "$job_id" in
     1)
       cat <<'EOF'
-test-linux	Test	2026-01-01T00:00:00Z === RUN   TestShared
-test-linux	Test	2026-01-01T00:00:00Z === RUN   TestShared/real-subtest
-test-linux	Test	2026-01-01T00:00:00Z     shared_test.go:10:
-test-linux	Test	2026-01-01T00:00:00Z         Error Trace: shared_test.go:10
-test-linux	Test	2026-01-01T00:00:00Z         Error:       Not equal:
-test-linux	Test	2026-01-01T00:00:00Z                      expected:
-test-linux	Test	2026-01-01T00:00:00Z                      true
-test-linux	Test	2026-01-01T00:00:00Z                      actual:
-test-linux	Test	2026-01-01T00:00:00Z                      false
-test-linux	Test	2026-01-01T00:00:00Z --- FAIL: TestShared/real-subtest (0.01s)
-test-linux	Test	2026-01-01T00:00:00Z --- FAIL: TestShared (0.01s)
-test-linux	Test	2026-01-01T00:00:00Z FAIL
-test-linux	Test	2026-01-01T00:00:00Z FAIL	example/shared	0.02s
+2026-01-01T00:00:00.0000000Z === RUN   TestShared
+2026-01-01T00:00:00.0000000Z === RUN   TestShared/real-subtest
+2026-01-01T00:00:00.0000000Z     shared_test.go:10:
+2026-01-01T00:00:00.0000000Z         Error Trace: shared_test.go:10
+2026-01-01T00:00:00.0000000Z         Error:       Not equal:
+2026-01-01T00:00:00.0000000Z                      expected:
+2026-01-01T00:00:00.0000000Z                      true
+2026-01-01T00:00:00.0000000Z                      actual:
+2026-01-01T00:00:00.0000000Z                      false
+2026-01-01T00:00:00.0000000Z --- FAIL: TestShared/real-subtest (0.01s)
+2026-01-01T00:00:00.0000000Z --- FAIL: TestShared (0.01s)
+2026-01-01T00:00:00.0000000Z FAIL
+2026-01-01T00:00:00.0000000Z FAIL	example/shared	0.02s
 EOF
       ;;
     2)
-      printf '%s\n' $'test-windows\tTest\t2026-01-01T00:00:00Z\tpanic: test timed out after 10m0s'
+      cat <<'EOF'
+2026-01-01T00:00:00.0000000Z ##[group]Run actions/checkout
+2026-01-01T00:00:00.0000000Z Syncing repository: docker/docker-agent
+2026-01-01T00:00:00.0000000Z ##[endgroup]
+2026-01-01T00:00:00.0000000Z ##[group]Run task test
+2026-01-01T00:00:00.0000000Z ##[endgroup]
+2026-01-01T00:00:00.0000000Z ok  	example/fast	0.01s
+2026-01-01T00:00:00.0000000Z ok  	example/fast2	0.01s
+2026-01-01T00:00:00.0000000Z ok  	example/fast3	0.01s
+2026-01-01T00:00:00.0000000Z ok  	example/fast4	0.01s
+2026-01-01T00:00:00.0000000Z ok  	example/fast5	0.01s
+2026-01-01T00:00:00.0000000Z ok  	example/fast6	0.01s
+2026-01-01T00:00:00.0000000Z ok  	example/fast7	0.01s
+2026-01-01T00:00:00.0000000Z ok  	example/fast8	0.01s
+2026-01-01T00:00:00.0000000Z panic: test timed out after 10m0s
+2026-01-01T00:00:00.0000000Z FAIL	example/slow	600.00s
+2026-01-01T00:00:00.0000000Z ##[error]Process completed with exit code 1.
+EOF
       ;;
     3)
       cat <<'EOF'
-test-race	Test	2026-01-01T00:00:00.1234567Z WARNING: DATA RACE
-test-race	Test	2026-01-01T00:00:00.1234567Z --- FAIL: TestShared/race-subtest (0.01s)
-test-race	Test	2026-01-01T00:00:00.1234567Z --- FAIL: TestShared (0.02s)
+2026-01-01T00:00:00.1234567Z WARNING: DATA RACE
+2026-01-01T00:00:00.1234567Z --- FAIL: TestShared/race-subtest (0.01s)
+2026-01-01T00:00:00.1234567Z --- FAIL: TestShared (0.02s)
 EOF
       ;;
     5)
@@ -111,7 +130,7 @@ EOF
       ;;
     4)
       for i in {1..11}; do
-        printf '%s\n' "test-linux"$'\t'"Test"$'\t'"2026-01-01T00:00:00Z"$'\t'"--- FAIL: TestMany$i (0.01s)"
+        printf '%s\n' "2026-01-01T00:00:00.0000000Z --- FAIL: TestMany$i (0.01s)"
       done
       ;;
   esac
@@ -247,6 +266,16 @@ if grep -q 'The top-level test `Test.*/' "$TMP/capture"/body-*.md || \
 fi
 grep -q 'no top-level failed tests' "$TMP/capture"/body-*.md
 grep -q 'test-windows (timeout)' "$TMP/capture"/body-*.md
+timeout_body="$(grep -l 'test-windows (timeout)' "$TMP/capture"/body-*.md)"
+grep -q 'panic: test timed out after 10m0s' "$timeout_body"
+if grep -q 'Syncing repository' "$timeout_body"; then
+  echo 'job-level excerpt should show the log tail, not the setup steps' >&2
+  exit 1
+fi
+if grep -q 'run view\|log-failed' "$TMP/capture/calls"; then
+  echo 'reporter must read job logs through the API, not gh run view' >&2
+  exit 1
+fi
 grep -q -- '--type Bug' "$TMP/capture/calls"
 grep -q -- '--assignee dgageot' "$TMP/capture/calls"
 grep -q -- '--label flaky-test\\,automated\\,area/testing\\,status/needs-triage\\,area/ci' "$TMP/capture/calls"
