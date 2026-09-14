@@ -22,7 +22,7 @@ func rootFrameWidths(frame string) []int {
 }
 
 func TestActualProgramScrolledUpStreamDefersOffscreenTail(t *testing.T) {
-	root, _, _ := wallClockRoot(t, 120, 40)
+	root, _, _ := frozenClockRoot(t, 120, 40)
 	sess, _, _ := mixedHistorySession(1000)
 	root.application.Session().Messages = sess.Messages
 	_ = root.activeTab.chatPage.Init()
