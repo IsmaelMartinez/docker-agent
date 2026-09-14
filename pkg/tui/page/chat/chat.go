@@ -174,13 +174,9 @@ type Page interface {
 	// the current app.Session().ID after a session restore or in-place
 	// replace.
 	SetRoutingID(id string)
-	// TakeRoutedTimers returns and clears the routed one-shot commands
-	// (presentation timers, generated-media resolution) armed by the most
-	// recent Update. The active page's Update already returns them inside
-	// its regular command; the appModel calls this for background pages —
-	// whose regular commands are discarded — so those deadlines and
-	// resolutions keep running while a tab is hidden.
-	TakeRoutedTimers() tea.Cmd
+	// UpdateEffects exposes command ownership to the tab host. Update is the
+	// standalone adapter, which dispatches all effects as visible.
+	UpdateEffects(msg tea.Msg) (Page, Effects)
 	VisualGeneration() uint64
 }
 
@@ -236,11 +232,8 @@ type chatPage struct {
 	// which is correct when this is the only page).
 	routingID  string
 	inputScope *inputScope
-	// pendingTimers holds the routed one-shot commands (presentation timers,
-	// generated-media resolution) armed by the current Update, so they can be
-	// re-collected via TakeRoutedTimers when the regular command is discarded
-	// (background tabs).
-	pendingTimers []tea.Cmd
+	// Non-nil only while collecting the current update result.
+	effects *Effects
 
 	// Track whether we've received content from an assistant response
 	// Used by --exit-after-response to ensure we don't exit before receiving content
@@ -535,6 +528,14 @@ func Cleanup(page Page) {
 
 // Update handles messages and updates the page state
 func (p *chatPage) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
+	page, effects := p.UpdateEffects(msg)
+	return page, effects.Cmd(true)
+}
+
+func (p *chatPage) UpdateEffects(msg tea.Msg) (Page, Effects) {
+	var effects Effects
+	p.effects = &effects
+	defer func() { p.effects = nil }()
 	model, cmd := p.update(msg)
 	// State changes (async sidebar updates, streaming indicators) can move
 	// child components without any resize. Child positions are only applied
@@ -544,7 +545,8 @@ func (p *chatPage) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	if relayout := p.relayoutIfNeeded(); relayout != nil {
 		cmd = tea.Batch(cmd, relayout)
 	}
-	return model, cmd
+	effects.Visible = cmd
+	return model.(Page), effects
 }
 
 // relayoutIfNeeded reapplies the current geometry when the computed layout no
@@ -560,10 +562,6 @@ func (p *chatPage) relayoutIfNeeded() tea.Cmd {
 }
 
 func (p *chatPage) update(msg tea.Msg) (layout.Model, tea.Cmd) {
-	// Timers armed by a previous Update were dispatched by its caller (either
-	// through the returned command or via TakeRoutedTimers); only this
-	// update's timers may be collected after it.
-	p.pendingTimers = nil
 	if result, ok := msg.(interface{ inputOrigin() *inputScope }); ok {
 		if result.inputOrigin() != p.inputScope || p.inputScope == nil || p.inputScope.ctx.Err() != nil {
 			return p, nil
@@ -1573,24 +1571,7 @@ func (p *chatPage) SetRoutingID(id string) {
 	p.routingID = id
 }
 
-// TakeRoutedTimers returns and clears the routed timer commands armed by the
-// most recent Update. See Page.TakeRoutedTimers.
-func (p *chatPage) TakeRoutedTimers() tea.Cmd {
-	if len(p.pendingTimers) == 0 {
-		return nil
-	}
-	cmd := tea.Batch(p.pendingTimers...)
-	p.pendingTimers = nil
-	return cmd
-}
-
-// scheduleTransferTimers arms the sidebar's one-shot presentation timers,
-// addressed to this page: with a routing identity each expiry is wrapped in
-// a messages.RoutedMsg so it lands on this page's tab even when another tab
-// is active (or this one is hidden) by then; without one (standalone pages)
-// the raw payload goes to the single active page. The commands are also
-// recorded for TakeRoutedTimers so an update on a hidden page keeps its
-// deadlines armed.
+// scheduleTransferTimers keeps presentation deadlines running on their owner.
 func (p *chatPage) scheduleTransferTimers(timers []sidebar.TransferTimer) tea.Cmd {
 	if len(timers) == 0 {
 		return nil
@@ -1600,8 +1581,7 @@ func (p *chatPage) scheduleTransferTimers(timers []sidebar.TransferTimer) tea.Cm
 		cmds = append(cmds, p.routedTimerCmd(timer))
 	}
 	cmd := tea.Batch(cmds...)
-	p.pendingTimers = append(p.pendingTimers, cmd)
-	return cmd
+	return p.tabLocal(cmd)
 }
 
 // routedTimerCmd schedules one timer, wrapping its payload in the page's
