@@ -1,6 +1,7 @@
 package content
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
+	"github.com/docker/docker-agent/pkg/atomicfile"
 	"github.com/docker/docker-agent/pkg/configsize"
 	"github.com/docker/docker-agent/pkg/paths"
 )
@@ -74,12 +76,7 @@ func NewStore(opts ...Opt) (*Store, error) {
 	}
 
 	if store.baseDir == "" {
-		homeDir := paths.GetHomeDir()
-		if homeDir == "" {
-			return nil, errors.New("getting home directory: home directory is unavailable")
-		}
-
-		store.baseDir = filepath.Join(homeDir, ".cagent", "store")
+		store.baseDir = filepath.Join(paths.GetDataDir(), "store")
 	}
 
 	if err := os.MkdirAll(store.baseDir, 0o700); err != nil {
@@ -406,7 +403,7 @@ func (s *Store) saveMetadata(digest string, metadata *ArtifactMetadata) error {
 		return fmt.Errorf("marshaling metadata: %w", err)
 	}
 
-	return os.WriteFile(metadataPath, data, 0o600)
+	return atomicfile.Write(metadataPath, bytes.NewReader(data), 0o600)
 }
 
 // loadMetadata loads metadata for an artifact

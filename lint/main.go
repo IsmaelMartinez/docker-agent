@@ -38,6 +38,7 @@ var cops = []cop.Cop{
 	WrapErrors,
 	DeferMutexUnlock,
 	OTelTracerName,
+	AtomicStateWrite,
 }
 
 // programCops lists whole-program, inter-procedural cops. These run once over

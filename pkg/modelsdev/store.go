@@ -1,6 +1,7 @@
 package modelsdev
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,7 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker-agent/pkg/atomicfile"
 	"github.com/docker/docker-agent/pkg/desktop/transport"
+	"github.com/docker/docker-agent/pkg/paths"
 )
 
 const (
@@ -116,11 +119,7 @@ func NewStore(opts ...Opt) (*Store, error) {
 
 	cacheFile := options.cacheFile
 	if cacheFile == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get user home directory: %w", err)
-		}
-		cacheFile = filepath.Join(homeDir, ".cagent", CacheFileName)
+		cacheFile = filepath.Join(paths.GetCacheDir(), CacheFileName)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(cacheFile), 0o700); err != nil {
@@ -457,7 +456,7 @@ func saveToCache(cacheFile string, database *Database, etag string) error {
 		return fmt.Errorf("failed to marshal cached data: %w", err)
 	}
 
-	if err := os.WriteFile(cacheFile, data, 0o600); err != nil {
+	if err := atomicfile.Write(cacheFile, bytes.NewReader(data), 0o600); err != nil {
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}
 

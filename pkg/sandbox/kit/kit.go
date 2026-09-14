@@ -24,6 +24,7 @@
 package kit
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -46,6 +47,7 @@ import (
 	"github.com/docker/portcullis"
 	"github.com/fatih/color"
 
+	"github.com/docker/docker-agent/pkg/atomicfile"
 	"github.com/docker/docker-agent/pkg/config"
 	latestcfg "github.com/docker/docker-agent/pkg/config/latest"
 	"github.com/docker/docker-agent/pkg/config/sources"
@@ -786,7 +788,7 @@ func writeManifest(dir string, m Manifest) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, manifestFile), data, 0o600)
+	return atomicfile.Write(filepath.Join(dir, manifestFile), bytes.NewReader(data), 0o600)
 }
 
 // PrintSummary writes a human-readable description of what was staged
