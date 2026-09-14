@@ -163,7 +163,7 @@ func readInstructionFiles(parentDir string, paths []string) (string, error) {
 //
 // This allows exiting early with a proper error message instead of failing later when trying to use a model or tool.
 func CheckRequiredEnvVars(ctx context.Context, cfg *latest.Config, modelsGateway string, env environment.Provider) error {
-	if modelsGateway != "" && environment.IsTrustedDockerURL(modelsGateway) {
+	if modelsGateway != "" && environment.IsDockerDomainURL(modelsGateway) {
 		if jwt, _ := env.Get(ctx, environment.DockerDesktopTokenEnv); jwt == "" {
 			return errors.New("sorry, you first need to sign in Docker Desktop to use the Docker AI Gateway")
 		}
