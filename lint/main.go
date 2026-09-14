@@ -30,6 +30,7 @@ var cops = []cop.Cop{
 	RuntimeSessionScoped,
 	HookConfigSync,
 	HookBuiltinsRegistered,
+	HookBuiltinsDocumented,
 	SlogContextual,
 	ConstructorPurity,
 	ConstructorCommandExec,
