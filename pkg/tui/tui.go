@@ -1388,8 +1388,17 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		model, refreshCmd := m.handleRefreshModelPicker(msg.Query)
 		return model, tea.Batch(closeCmd, refreshCmd)
 
-	case messages.ModelPickerRefreshedMsg:
+	case modelPickerRefreshResult:
+		if m.tabs[msg.tabID] != m.activeTab || m.activeTab.chatPage != msg.origin || m.application != msg.application {
+			return m, nil
+		}
 		return m.handleModelPickerRefreshed(msg)
+
+	case modelPickerRefreshEffect:
+		if m.tabs[msg.tabID] != m.activeTab || m.activeTab.chatPage != msg.origin || m.application != msg.application {
+			return m, nil
+		}
+		return m.Update(msg.inner)
 
 	case messages.ChangeModelMsg:
 		return m.handleChangeModel(msg.ModelRef)

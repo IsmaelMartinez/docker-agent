@@ -234,7 +234,8 @@ type chatPage struct {
 	// routingID is the tab identity this page's routed UI timers are
 	// addressed to; empty for standalone pages (timers then fire unrouted,
 	// which is correct when this is the only page).
-	routingID string
+	routingID  string
+	inputScope *inputScope
 	// pendingTimers holds the routed one-shot commands (presentation timers,
 	// generated-media resolution) armed by the current Update, so they can be
 	// re-collected via TakeRoutedTimers when the regular command is discarded
@@ -398,6 +399,7 @@ func New(ar *animation.Runtime, ctx context.Context, a *app.App, sessionState *s
 		ar:                ar,
 		cancel:            cancel,
 		ctx:               func() context.Context { return context.WithoutCancel(ctx) },
+		inputScope:        newInputScope(context.WithoutCancel(ctx), a),
 		sidebar:           sidebar.New(ar, pageCtx, sessionState),
 		messages:          messages.New(ar, sessionState),
 		app:               a,
@@ -524,6 +526,9 @@ func WatchGitBranch(page Page) tea.Cmd {
 
 func Cleanup(page Page) {
 	if p, ok := page.(*chatPage); ok {
+		if p.inputScope != nil {
+			p.inputScope.close()
+		}
 		p.cancel()
 	}
 }
@@ -559,6 +564,12 @@ func (p *chatPage) update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	// through the returned command or via TakeRoutedTimers); only this
 	// update's timers may be collected after it.
 	p.pendingTimers = nil
+	if result, ok := msg.(interface{ inputOrigin() *inputScope }); ok {
+		if result.inputOrigin() != p.inputScope || p.inputScope == nil || p.inputScope.ctx.Err() != nil {
+			return p, nil
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		cmd := p.SetSize(msg.Width, msg.Height)
@@ -616,6 +627,7 @@ func (p *chatPage) update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		return p.handleSendMsg(msg)
 
 	case steerSentMsg:
+		p.inputScope.complete(msg.pending.id)
 		p.addPendingMessage(msg.pending)
 		return p, notification.InfoCmd("Message sent to the working agent · /settings to queue instead")
 
@@ -631,6 +643,7 @@ func (p *chatPage) update(msg tea.Msg) (layout.Model, tea.Cmd) {
 		)
 
 	case followUpSentMsg:
+		p.inputScope.complete(msg.pending.id)
 		p.addPendingMessage(msg.pending)
 		return p, notification.InfoCmd("Follow-up queued for the next turn")
 
@@ -1086,13 +1099,25 @@ func (p *chatPage) enqueueMessage(msg msgtypes.SendMsg) tea.Cmd {
 // steering was rejected (e.g. steer queue full).
 type (
 	steerSentMsg struct {
+		inputResult
+
 		pending queuedMessage
 	}
-	steerFailedMsg  struct{ original msgtypes.SendMsg }
+	steerFailedMsg struct {
+		inputResult
+
+		original msgtypes.SendMsg
+	}
 	followUpSentMsg struct {
+		inputResult
+
 		pending queuedMessage
 	}
-	followUpFailedMsg struct{ original msgtypes.SendMsg }
+	followUpFailedMsg struct {
+		inputResult
+
+		original msgtypes.SendMsg
+	}
 )
 
 // steerMessage injects the message into the ongoing stream via the runtime's
@@ -1101,32 +1126,52 @@ type (
 // added when the runtime drains the message and emits its UserMessageEvent,
 // which is the moment the agent actually sees it.
 func (p *chatPage) steerMessage(msg msgtypes.SendMsg) tea.Cmd {
-	ctx := p.ctx()
+	scope, application, sess, routingID := p.inputScope, p.app, p.app.Session(), p.routingID
+	ctx := scope.ctx
 	p.pendingSequence++
 	order := p.pendingSequence
 	return func() tea.Msg {
-		content := p.app.ResolveInput(ctx, msg.Content)
-		queued, err := p.app.QueueSteerMessage(ctx, content, msg.Attachments)
-		if err != nil {
-			slog.Warn("Failed to steer message; falling back to queue", "error", err)
-			return steerFailedMsg{original: msg}
+		if ctx.Err() != nil {
+			return nil
 		}
-		return steerSentMsg{pending: queuedMessage{id: queued.ID, content: msg.Content, runtimeContent: content, attachments: msg.Attachments, order: order}}
+		content := application.ResolveInput(ctx, msg.Content)
+		queued, err := application.QueueSteerMessageForSession(ctx, sess, content, msg.Attachments)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			slog.Warn("Failed to steer message; falling back to queue", "error", err)
+			return routeInputResult(routingID, steerFailedMsg{inputResult: inputResult{scope}, original: msg})
+		}
+		if !scope.track(queued, false) {
+			return nil
+		}
+		return routeInputResult(routingID, steerSentMsg{inputResult: inputResult{scope}, pending: queuedMessage{id: queued.ID, content: msg.Content, runtimeContent: content, attachments: msg.Attachments, order: order}})
 	}
 }
 
 func (p *chatPage) followUpMessage(msg msgtypes.SendMsg) tea.Cmd {
-	ctx := p.ctx()
+	scope, application, sess, routingID := p.inputScope, p.app, p.app.Session(), p.routingID
+	ctx := scope.ctx
 	p.pendingSequence++
 	order := p.pendingSequence
 	return func() tea.Msg {
-		content := p.app.ResolveInput(ctx, msg.Content)
-		queued, err := p.app.QueueFollowUpMessage(ctx, content, msg.Attachments)
-		if err != nil {
-			slog.Warn("Failed to enqueue follow-up; falling back to local queue", "error", err)
-			return followUpFailedMsg{original: msg}
+		if ctx.Err() != nil {
+			return nil
 		}
-		return followUpSentMsg{pending: queuedMessage{id: queued.ID, content: msg.Content, runtimeContent: content, attachments: msg.Attachments, followUp: true, order: order}}
+		content := application.ResolveInput(ctx, msg.Content)
+		queued, err := application.QueueFollowUpMessageForSession(ctx, sess, content, msg.Attachments)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			slog.Warn("Failed to enqueue follow-up; falling back to local queue", "error", err)
+			return routeInputResult(routingID, followUpFailedMsg{inputResult: inputResult{scope}, original: msg})
+		}
+		if !scope.track(queued, true) {
+			return nil
+		}
+		return routeInputResult(routingID, followUpSentMsg{inputResult: inputResult{scope}, pending: queuedMessage{id: queued.ID, content: msg.Content, runtimeContent: content, attachments: msg.Attachments, followUp: true, order: order}})
 	}
 }
 
