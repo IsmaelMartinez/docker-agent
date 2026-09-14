@@ -217,7 +217,7 @@ docker agent serve api <agent-file>|<agents-dir> [flags]
 > [!TIP]
 > **Live profiling (advanced)**
 >
-> For production diagnostics, set the `CAGENT_PPROF_ADDR` environment variable (or the hidden `--pprof-addr` flag) to a TCP address such as `127.0.0.1:6060`. Docker Agent will start a Go pprof HTTP server at `/debug/pprof/`, which you can query with `go tool pprof`. Use a loopback address — a non-loopback binding logs a security warning. This flag is intentionally hidden from `--help`.
+> For production diagnostics, set the `DOCKER_AGENT_PPROF_ADDR` environment variable (legacy `CAGENT_PPROF_ADDR` is also supported), or use the hidden `--pprof-addr` flag, with a TCP address such as `127.0.0.1:6060`. Docker Agent will start a Go pprof HTTP server at `/debug/pprof/`, which you can query with `go tool pprof`. Use a loopback address — a non-loopback binding logs a security warning. This flag is intentionally hidden from `--help`.
 
 > [!TIP]
 > **Multi-agent configs**
