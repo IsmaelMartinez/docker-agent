@@ -39,8 +39,14 @@ if [ "$1" = api ] && [[ "$*" == *'/actions/runs/123/jobs?per_page=100'* ]]; then
   exit 0
 fi
 
-if [ "$1" = api ] && [[ "$2" == repos/docker/docker-agent/actions/jobs/*/logs ]]; then
-  job_id="${2#repos/docker/docker-agent/actions/jobs/}"
+if [ "$1" = api ] && [[ "$*" == *'/actions/jobs/'*'/logs'* ]]; then
+  # Real gh refuses to print a response containing ANSI escapes without this.
+  [[ "$*" == *'--allow-escape-sequences'* ]] || {
+    echo 'job log fetch must pass --allow-escape-sequences' >&2
+    exit 1
+  }
+  args="$*"
+  job_id="${args##*/actions/jobs/}"
   job_id="${job_id%/logs}"
   case "$job_id" in
     1)

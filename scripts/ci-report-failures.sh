@@ -329,7 +329,9 @@ main() {
     # `gh run view --log-failed` refuses to serve logs while the run is in
     # progress, and this job is part of the run it reports on. The jobs log
     # endpoint serves a job's log as soon as that job has completed.
-    gh api "repos/$GH_REPO/actions/jobs/$job_id/logs" > "$raw_log"
+    # Go test output carries ANSI colour codes; without the flag gh refuses to
+    # print the response. normalize_log strips them.
+    gh api --allow-escape-sequences "repos/$GH_REPO/actions/jobs/$job_id/logs" > "$raw_log"
     normalize_log "$raw_log" "$clean_log"
     failed_tests "$clean_log" > "$tests_file"
     classification="$(classify_log "$clean_log")"
