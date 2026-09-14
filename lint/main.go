@@ -45,6 +45,7 @@ var cops = []cop.Cop{
 	OTelTracerName,
 	AtomicStateWrite,
 	HTTPClientTransport,
+	ToolsetSchemaRegistrySync,
 }
 
 // programCops lists whole-program, inter-procedural cops. These run once over
