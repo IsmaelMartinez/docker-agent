@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -306,7 +305,7 @@ func (h *Handler) subAgentNames(sess *session.Session) []string {
 // HandleRun starts a sub-agent task asynchronously and returns a task ID immediately.
 func (h *Handler) HandleRun(ctx context.Context, sess *session.Session, toolCall tools.ToolCall) (*tools.ToolCallResult, error) {
 	var params RunBackgroundAgentArgs
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
+	if err := tools.UnmarshalToolArguments(ctx, toolCall, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 
@@ -489,9 +488,9 @@ func (h *Handler) HandleList(_ context.Context, _ *session.Session, _ tools.Tool
 }
 
 // HandleView returns the output and status of a specific background agent task.
-func (h *Handler) HandleView(_ context.Context, _ *session.Session, toolCall tools.ToolCall) (*tools.ToolCallResult, error) {
+func (h *Handler) HandleView(ctx context.Context, _ *session.Session, toolCall tools.ToolCall) (*tools.ToolCallResult, error) {
 	var params ViewBackgroundAgentArgs
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
+	if err := tools.UnmarshalToolArguments(ctx, toolCall, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 
@@ -507,9 +506,9 @@ func (h *Handler) HandleView(_ context.Context, _ *session.Session, toolCall too
 }
 
 // HandleStop cancels a running background agent task.
-func (h *Handler) HandleStop(_ context.Context, _ *session.Session, toolCall tools.ToolCall) (*tools.ToolCallResult, error) {
+func (h *Handler) HandleStop(ctx context.Context, _ *session.Session, toolCall tools.ToolCall) (*tools.ToolCallResult, error) {
 	var params StopBackgroundAgentArgs
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
+	if err := tools.UnmarshalToolArguments(ctx, toolCall, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 

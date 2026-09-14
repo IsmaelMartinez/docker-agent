@@ -52,7 +52,7 @@ func (t *ToolSet) callTool(ctx context.Context, toolCall tools.ToolCall, _ tools
 	case http.MethodGet:
 		if toolCall.Function.Arguments != "" {
 			var params map[string]string
-			if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
+			if err := tools.UnmarshalToolArguments(ctx, toolCall, &params); err != nil {
 				return nil, fmt.Errorf("invalid arguments: %w", err)
 			}
 
@@ -60,7 +60,7 @@ func (t *ToolSet) callTool(ctx context.Context, toolCall tools.ToolCall, _ tools
 		}
 	case http.MethodPost:
 		var params map[string]any
-		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &params); err != nil {
+		if err := tools.UnmarshalToolArguments(ctx, toolCall, &params); err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 

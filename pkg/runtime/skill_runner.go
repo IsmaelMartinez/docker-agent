@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,7 +19,7 @@ import (
 // runSkillFork.
 func (r *LocalRuntime) handleRunSkill(ctx context.Context, sess *session.Session, toolCall tools.ToolCall, evts EventSink, rt tools.Runtime) (*tools.ToolCallResult, error) {
 	var args skills.RunSkillArgs
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
+	if err := tools.UnmarshalToolArguments(ctx, toolCall, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 	return r.runSkillFork(ctx, sess, args, evts, rt)

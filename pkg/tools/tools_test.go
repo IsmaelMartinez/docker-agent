@@ -11,6 +11,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUnmarshalToolArgumentsRepairsInput(t *testing.T) {
+	t.Parallel()
+
+	var args struct {
+		Paths []string `json:"paths"`
+	}
+	err := UnmarshalToolArguments(t.Context(), ToolCall{
+		Function: FunctionCall{
+			Name:      "read_multiple_files",
+			Arguments: `{"paths":"only.txt"}`,
+		},
+	}, &args)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"only.txt"}, args.Paths)
+}
+
+func TestUnmarshalToolArgumentsDefaultsEmptyInput(t *testing.T) {
+	t.Parallel()
+
+	var args map[string]any
+	err := UnmarshalToolArguments(t.Context(), ToolCall{}, &args)
+	require.NoError(t, err)
+	assert.Empty(t, args)
+}
+
 func TestNewHandler_WithArguments(t *testing.T) {
 	t.Parallel()
 

@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,7 +20,7 @@ func (r *LocalRuntime) handleListSessions(ctx context.Context, sess *session.Ses
 
 	var args sessioncontext.ListSessionsArgs
 	if strings.TrimSpace(toolCall.Function.Arguments) != "" {
-		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
+		if err := tools.UnmarshalToolArguments(ctx, toolCall, &args); err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 	}
@@ -58,7 +57,7 @@ func (r *LocalRuntime) handleReadSession(ctx context.Context, sess *session.Sess
 	}
 
 	var args sessioncontext.ReadSessionArgs
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
+	if err := tools.UnmarshalToolArguments(ctx, toolCall, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 	ref := strings.TrimSpace(args.SessionID)
