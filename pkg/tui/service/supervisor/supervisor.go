@@ -23,6 +23,7 @@ type SessionRunner struct {
 	App        *app.App
 	WorkingDir string
 	State      *tabstate.State
+	Scope      *messages.RouteScope
 	cancel     context.CancelFunc
 	cleanup    func()
 }
@@ -76,6 +77,7 @@ func (s *Supervisor) AddSession(ctx context.Context, a *app.App, sess *session.S
 		App:        a,
 		WorkingDir: workingDir,
 		State:      tabstate.New(sess.ID, sess.Title),
+		Scope:      &messages.RouteScope{},
 		cleanup:    cleanup,
 	}
 
@@ -130,40 +132,25 @@ func (s *Supervisor) subscribeWithRouting(ctx context.Context, a *app.App, sessi
 
 	send := func(msg tea.Msg) {
 		s.mu.RLock()
-		p := s.program
-		s.mu.RUnlock()
-
-		if p == nil {
+		p, runner := s.program, s.runners[sessionID]
+		if p == nil || runner == nil || runner.App != a || ctx.Err() != nil {
+			s.mu.RUnlock()
 			return
 		}
-
-		// Check if this is a runtime event that should update state
-		s.handleRuntimeEvent(sessionID, msg)
-
-		// Wrap the message with session ID
-		p.Send(messages.RoutedMsg{
-			SessionID: sessionID,
-			Inner:     msg,
-		})
+		scope := runner.Scope
+		s.mu.RUnlock()
+		p.Send(messages.RoutedMsg{SessionID: sessionID, Scope: scope, Inner: msg})
 	}
 
 	a.SubscribeWith(ctx, send)
 }
 
-// handleRuntimeEvent applies tab state before delivering the routed event.
-func (s *Supervisor) handleRuntimeEvent(tabID string, msg tea.Msg) {
+// RetirePage invalidates runtime deliveries already queued for the previous page.
+func (s *Supervisor) RetirePage(tabID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	runner := s.runners[tabID]
-	if runner == nil {
-		return
-	}
-	changed, bell := runner.State.Apply(msg, tabID == s.activeID)
-	if changed {
-		s.notifyTabsUpdated()
-	}
-	if bell && s.program != nil {
-		go s.program.Send(messages.BellMsg{})
+	if runner := s.runners[tabID]; runner != nil {
+		runner.Scope = &messages.RouteScope{}
 	}
 }
 
@@ -277,6 +264,8 @@ func (s *Supervisor) ReplaceRunnerApp(ctx context.Context, sessionID string, new
 	}
 	oldCleanup := runner.cleanup
 
+	// Retire the old subscription before the new app can emit startup events.
+	runner.Scope = &messages.RouteScope{}
 	// Replace app, working dir, and cleanup.
 	runner.App = newApp
 	runner.WorkingDir = workingDir

@@ -680,6 +680,7 @@ func (m *appModel) editorOpts() []editor.Option {
 func (m *appModel) initSessionComponents(tabID string, a *app.App, sess *session.Session) {
 	tab := m.ensureTab(tabID)
 	if tab.chatPage != nil {
+		m.retireAttention(tab)
 		chat.Cleanup(tab.chatPage)
 	}
 	ss := service.NewSessionState(sess)
@@ -817,7 +818,11 @@ func (m *appModel) init() tea.Cmd {
 // observe every message that flows through the TUI (to detect completed
 // steps) without ever consuming it.
 func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	stateCmd := m.applyTabEvent(m.activeTab, msg)
 	model, cmd := m.update(msg)
+	if isTabStateEvent(msg) && m.supervisor != nil {
+		cmd = tea.Batch(cmd, stateCmd, m.replayPendingEvent(m.supervisor.ActiveID()))
+	}
 	if obs := m.tour.Observe(msg); obs != nil {
 		cmd = tea.Batch(cmd, obs)
 	}
@@ -921,14 +926,9 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// --- Tab management ---
 
 	case messages.TabsUpdatedMsg:
-		prevHeight := m.tabBar.Height()
-		m.tabBar.SetTabs(msg.Tabs, msg.ActiveIdx)
-		m.statusBar.SetShowNewTab(m.tabBar.Height() == 0)
-		if m.tabBar.Height() != prevHeight {
-			cmd := m.resizeAll()
-			return m, cmd
-		}
-		return m, nil
+		// Subscription and lifecycle notifications may arrive out of order.
+		cmd := m.refreshTabs()
+		return m, cmd
 
 	case messages.SpawnSessionMsg:
 		return m.handleSpawnSession(msg.WorkingDir)
@@ -1525,6 +1525,10 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleRoutedMsg processes messages routed to specific sessions.
 func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) {
+	runner := m.supervisor.GetRunner(msg.SessionID)
+	if msg.Scope != nil && (runner == nil || runner.Scope != msg.Scope) {
+		return m, nil
+	}
 	activeID := m.supervisor.ActiveID()
 
 	if msg.SessionID == activeID {
@@ -1535,8 +1539,12 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 	// Background session: update its chat page directly so streaming content accumulates.
 	// Only tab-local work and global effects are dispatched for hidden pages.
 	tab := m.tabs[msg.SessionID]
+	if tab == nil && runner != nil {
+		tab = m.ensureTab(msg.SessionID)
+	}
+	stateCmd := m.applyTabEvent(tab, msg.Inner)
 	if tab == nil || tab.chatPage == nil {
-		return m, nil
+		return m, stateCmd
 	}
 
 	// Update session state for inactive sessions
@@ -1561,7 +1569,7 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 	if _, isPlanChange := msg.Inner.(*runtime.PlanChangedEvent); isPlanChange && m.planDialogOpen() {
 		effects.Global = tea.Batch(effects.Global, m.planRefreshCmd(false))
 	}
-	return m, effects.Cmd(false)
+	return m, tea.Batch(stateCmd, effects.Cmd(false))
 }
 
 // applyPauseEvent advances a session's pause indicator in response to runtime
@@ -1701,6 +1709,7 @@ func (m *appModel) handleLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 	model, switchCmd := m.handleSwitchTab(newSessionID)
 
 	// Replace the blank session with the loaded one and rebuild all components.
+	m.preparePageReplacement(newSessionID)
 	m.bindTabSession(newSessionID, sess.ID)
 	m.application.ReplaceSession(ctx, sess)
 	m.initSessionComponents(newSessionID, m.application, sess)
@@ -1722,6 +1731,7 @@ func (m *appModel) handleLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 // a fresh runtime is spawned via the supervisor so that tools operate in the correct directory.
 func (m *appModel) replaceActiveSession(ctx context.Context, sess *session.Session) (tea.Model, tea.Cmd) {
 	activeID := m.supervisor.ActiveID()
+	m.preparePageReplacement(activeID)
 	m.bindTabSession(activeID, sess.ID)
 
 	slog.DebugContext(ctx, "Replacing empty session in-place", "tab_id", activeID, "loaded_session", sess.ID)
@@ -1774,6 +1784,7 @@ func (m *appModel) handleClearSession() (tea.Model, tea.Cmd) {
 	}
 
 	// Create a fresh session in the same app, preserving the working dir.
+	m.preparePageReplacement(activeID)
 	m.application.NewSession()
 	newSess := m.application.Session()
 	m.bindTabSession(activeID, newSess.ID)
@@ -1907,43 +1918,13 @@ func (m *appModel) openWorkingDirPicker() (tea.Model, tea.Cmd) {
 // Existing chat pages and editors are preserved (not recreated) so that in-flight streaming
 // content and draft text are retained when switching back to a tab.
 func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
-	// If a background dialog (e.g. pending elicitation) is open on the
-	// outgoing tab, capture both its originating event and the live dialog
-	// instance before the supervisor flips activeID. We only commit the
-	// re-stash after SwitchTo succeeds — otherwise a failed switch would
-	// leave the supervisor with a stale pending event and the dialog still
-	// on screen.
-	//
-	// Stashing the dialog instance (rather than rebuilding it from the event
-	// on return) preserves any in-progress input the user typed — e.g. text
-	// already entered into a user_prompt elicitation. See issue #2770.
-	var (
-		backgroundEvent  tea.Msg
-		backgroundDialog dialog.Dialog
-		outgoingTabID    string
-	)
-	if m.dialogMgr.Open() && m.dialogMgr.TopIsBackground() {
-		backgroundEvent = m.dialogMgr.TopBackgroundEvent()
-		backgroundDialog = m.dialogMgr.TopDialog()
-		outgoingTabID = m.supervisor.ActiveID()
-	}
-
+	outgoing := m.activeTab
 	runner := m.supervisor.SwitchTo(sessionID)
 	if runner == nil {
 		return m, notification.ErrorCmd("Session not found")
 	}
-
-	// Now that the switch is committed, finalize the dialog hand-off.
-	var closeBackgroundDialogCmd tea.Cmd
-	if backgroundEvent != nil && outgoingTabID != "" && outgoingTabID != sessionID {
-		m.ensureTab(outgoingTabID).state.Prepend(backgroundEvent)
-		if backgroundDialog != nil {
-			m.ensureTab(outgoingTabID).stashedDialog = &stashedDialog{
-				dialog: backgroundDialog,
-				event:  backgroundEvent,
-			}
-		}
-		closeBackgroundDialogCmd = core.CmdHandler(dialog.CloseDialogMsg{})
+	if outgoing != m.tabs[sessionID] {
+		m.parkAttention(outgoing)
 	}
 
 	// Blur current editor before switching
@@ -1967,7 +1948,7 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 					}
 				}
 
-				cmd = tea.Batch(cmd, m.applySidebarCollapsed(sessionID), closeBackgroundDialogCmd)
+				cmd = tea.Batch(cmd, m.applySidebarCollapsed(sessionID))
 				return model, cmd
 			}
 		}
@@ -2015,9 +1996,6 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	if pendingCmd := m.replayPendingEvent(sessionID); pendingCmd != nil {
 		cmds = append(cmds, pendingCmd)
 	}
-	if closeBackgroundDialogCmd != nil {
-		cmds = append(cmds, closeBackgroundDialogCmd)
-	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -2063,6 +2041,9 @@ func (m *appModel) handleCloseTab(sessionID string) (tea.Model, tea.Cmd) {
 	// Compute persisted session-store ID *before* closing (runner goes away).
 	persistedID := m.persistedSessionID(sessionID)
 
+	if wasActive {
+		m.retireAttention(m.activeTab)
+	}
 	nextActiveID := m.supervisor.CloseSession(sessionID)
 
 	// Clean up per-session state

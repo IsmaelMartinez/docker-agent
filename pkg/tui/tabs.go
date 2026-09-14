@@ -4,8 +4,11 @@ import (
 	"context"
 	"log/slog"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/docker/docker-agent/pkg/app"
 	"github.com/docker/docker-agent/pkg/tui/components/editor"
+	"github.com/docker/docker-agent/pkg/tui/dialog"
 	"github.com/docker/docker-agent/pkg/tui/page/chat"
 	"github.com/docker/docker-agent/pkg/tui/service"
 	"github.com/docker/docker-agent/pkg/tui/service/supervisor"
@@ -25,8 +28,8 @@ type tabModel struct {
 	// Non-nil until the saved conversation is loaded on first activation.
 	pendingRestore          *string
 	pendingSidebarCollapsed *bool
-	// Retain the live dialog so unfinished input survives a tab switch.
-	stashedDialog *stashedDialog
+	// Keys are runtime event pointers; retain every prompt's unfinished input.
+	attentionDialogs map[tea.Msg]dialog.Dialog
 }
 
 func (m *appModel) ensureTab(tabID string) *tabModel {
@@ -197,6 +200,6 @@ func (m *appModel) bindTabSession(tabID, sessionID string) {
 	tab := m.ensureTab(tabID)
 	if tab.state != nil && tab.state.SessionID() != sessionID {
 		tab.state.ReplaceSession(sessionID)
-		tab.stashedDialog = nil
+		tab.attentionDialogs = nil
 	}
 }

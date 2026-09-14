@@ -104,38 +104,28 @@ func TestCloseSession_TwoTabs_CloseSecond(t *testing.T) {
 	assert.Equal(t, []string{"A"}, s.order)
 }
 
-func TestRuntimeEventUpdatesOwningTab(t *testing.T) {
+func TestRetirePageChangesDeliveryScope(t *testing.T) {
 	t.Parallel()
 	s := newTestSupervisor([]string{"A", "B"}, "A")
-	active := &runtime.ElicitationRequestEvent{ElicitationID: "active"}
-	background := &runtime.ElicitationRequestEvent{ElicitationID: "background"}
-	s.handleRuntimeEvent("A", active)
-	s.handleRuntimeEvent("B", background)
-	s.handleRuntimeEvent("gone", background)
-	tabs, activeIdx := s.GetTabs()
-	assert.Equal(t, 0, activeIdx)
-	assert.False(t, tabs[0].NeedsAttention)
-	assert.True(t, tabs[1].NeedsAttention)
-	assert.Nil(t, s.GetRunner("A").State.Consume())
-	assert.Same(t, background, s.GetRunner("B").State.Consume())
-	s.SwitchTo("B")
-	tabs, activeIdx = s.GetTabs()
-	assert.Equal(t, 1, activeIdx)
-	assert.False(t, tabs[1].NeedsAttention)
+	s.RetirePage("A")
+	before := s.GetRunner("A").Scope
+	s.RetirePage("A")
+	assert.NotSame(t, before, s.GetRunner("A").Scope)
+	s.RetirePage("gone")
 }
 
 func TestRestoredConversationKeepsTabRoutingIdentity(t *testing.T) {
 	t.Parallel()
 	s := newTestSupervisor([]string{"tab"}, "tab")
 	s.GetRunner("tab").State.ReplaceSession("restored")
-	s.handleRuntimeEvent("tab", &runtime.StreamStartedEvent{SessionID: "restored"})
+	s.GetRunner("tab").State.Apply(&runtime.StreamStartedEvent{SessionID: "restored"}, true)
 	tabs, _ := s.GetTabs()
 	assert.Equal(t, "tab", tabs[0].SessionID)
 	assert.True(t, tabs[0].IsRunning)
-	s.handleRuntimeEvent("tab", &runtime.StreamStoppedEvent{SessionID: "tab"})
+	s.GetRunner("tab").State.Apply(&runtime.StreamStoppedEvent{SessionID: "tab"}, true)
 	tabs, _ = s.GetTabs()
 	assert.True(t, tabs[0].IsRunning)
-	s.handleRuntimeEvent("tab", &runtime.StreamStoppedEvent{SessionID: "restored"})
+	s.GetRunner("tab").State.Apply(&runtime.StreamStoppedEvent{SessionID: "restored"}, true)
 	tabs, _ = s.GetTabs()
 	assert.False(t, tabs[0].IsRunning)
 }

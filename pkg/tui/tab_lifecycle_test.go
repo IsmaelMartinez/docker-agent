@@ -80,7 +80,7 @@ func TestSwitchTabFailureLeavesDialogAndComponents(t *testing.T) {
 	assert.Same(t, ed, m.activeTab.editor)
 	assert.Same(t, state, m.activeTab.sessionState)
 	assert.Same(t, prompt, m.dialogMgr.TopDialog())
-	assert.Nil(t, m.tabs[id].stashedDialog)
+	assert.Nil(t, m.tabs[id].attentionDialogs)
 	assert.Nil(t, m.ensureTab(id).state.Consume())
 	assert.True(t, hasMsg[notification.ShowMsg](collectMsgs(cmd)))
 }
@@ -138,7 +138,7 @@ func TestCloseInactiveTabRemovesAllUIState(t *testing.T) {
 	m.ensureTab(closedID).editor = closedEditor
 	m.ensureTab(closedID).pendingRestore = new("saved")
 	m.ensureTab(closedID).pendingSidebarCollapsed = new(true)
-	m.ensureTab(closedID).stashedDialog = &stashedDialog{dialog: &stubDialog{id: "stashed"}}
+	m.ensureTab(closedID).attentionDialogs = map[tea.Msg]dialog.Dialog{&runtime.ElicitationRequestEvent{}: &stubDialog{id: "stashed"}}
 	_, _ = m.handleSpawnSession("/second")
 	page, ed, state := m.activeTab.chatPage, m.activeTab.editor, m.activeTab.sessionState
 
@@ -410,12 +410,12 @@ func TestClearSessionDiscardsPreviousAttention(t *testing.T) {
 	oldID := m.application.Session().ID
 	event := &runtime.ElicitationRequestEvent{SessionID: "old-detached-job"}
 	tab.state.Apply(event, false)
-	tab.stashedDialog = &stashedDialog{dialog: &stubDialog{}, event: event}
+	tab.attentionDialogs = map[tea.Msg]dialog.Dialog{event: &stubDialog{}}
 
 	_, _ = m.handleClearSession()
 
 	assert.Same(t, tab, m.activeTab)
-	assert.Nil(t, tab.stashedDialog)
+	assert.Nil(t, tab.attentionDialogs)
 	assert.Nil(t, tab.state.Consume())
 	_, running, attention := tab.state.Snapshot()
 	assert.False(t, running)

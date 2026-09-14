@@ -98,23 +98,18 @@ func TestHiddenAttentionEffectsDoNotDuplicateFIFO(t *testing.T) {
 	first := &runtime.ElicitationRequestEvent{ElicitationID: "first", Message: "first prompt"}
 	second := &runtime.ElicitationRequestEvent{ElicitationID: "second", Message: "second prompt"}
 	for _, event := range []tea.Msg{first, second} {
-		origin.state.Apply(event, false) // subscription queues attention before delivery
 		_, cmd := m.Update(messages.RoutedMsg{SessionID: id, Inner: event})
-		assert.Nil(t, cmd, "hidden attention must not also dispatch a dialog command")
+		assert.False(t, hasMsg[dialog.OpenDialogMsg](collectMsgs(cmd)), "hidden attention must not dispatch a dialog command")
 	}
 	assert.False(t, m.dialogMgr.Open())
 
 	// Activate without replaying, so the native replay sequence can be checked.
 	m.supervisor.SwitchTo(id)
 	m.activeTab, m.application = origin, application
-	msgs := drainInOrder(t, m.replayPendingEvent(id))
-	require.Len(t, msgs, 2)
-	for i, want := range []tea.Msg{first, second} {
-		open, ok := msgs[i].(dialog.OpenDialogMsg)
-		require.True(t, ok)
-		assert.Same(t, want, open.OriginatingEvent)
-		_, _ = m.Update(open)
-	}
-	assert.Same(t, second, m.dialogMgr.TopBackgroundEvent())
+	_ = m.replayPendingEvent(id)
+	opened := m.dialogMgr.TakeBackgroundDialogs(func(tea.Msg) bool { return true })
+	require.Len(t, opened, 2)
+	assert.Same(t, first, opened[0].OriginatingEvent)
+	assert.Same(t, second, opened[1].OriginatingEvent)
 	assert.Nil(t, m.replayPendingEvent(id), "the FIFO is consumed exactly once")
 }
