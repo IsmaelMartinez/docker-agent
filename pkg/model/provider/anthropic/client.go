@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -102,30 +101,17 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 
 		// When using a Gateway, tokens are short-lived.
 		anthropicClient.clientFn = func(ctx context.Context) (anthropic.Client, error) {
-			// Query a fresh auth token each time the client is used.
-			authToken, err := base.GatewayAuthToken(ctx, env, gateway)
+			connection, err := base.NewGatewayClient(ctx, env, gateway, "https://api.anthropic.com/", "/", cfg, &globalOptions)
 			if err != nil {
 				return anthropic.Client{}, err
 			}
 
-			url, err := url.Parse(gateway)
-			if err != nil {
-				return anthropic.Client{}, fmt.Errorf("invalid gateway URL: %w", err)
-			}
-			baseURL := fmt.Sprintf("%s://%s%s/", url.Scheme, url.Host, url.Path)
-
-			// Configure a custom HTTP client to inject headers and query params used by the Gateway.
-			httpOptions := base.GatewayHTTPOptions(url, "https://api.anthropic.com/", cfg, &globalOptions)
-			httpOptions = append(httpOptions, base.GatewayAuthRetry(env, gateway)...)
-
-			gatewayHTTPClient := httpclient.NewHTTPClient(ctx, httpOptions...)
-			globalOptions.WrapTransport(ctx, gatewayHTTPClient)
 			clientOptions := []option.RequestOption{
-				option.WithBaseURL(baseURL),
-				option.WithHTTPClient(gatewayHTTPClient),
+				option.WithBaseURL(connection.BaseURL),
+				option.WithHTTPClient(connection.HTTPClient),
 			}
-			if authToken != "" {
-				clientOptions = append(clientOptions, option.WithAuthToken(authToken), option.WithAPIKey(authToken))
+			if connection.AuthToken != "" {
+				clientOptions = append(clientOptions, option.WithAuthToken(connection.AuthToken), option.WithAPIKey(connection.AuthToken))
 			}
 			client := anthropic.NewClient(clientOptions...)
 
