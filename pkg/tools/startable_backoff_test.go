@@ -575,18 +575,10 @@ func (r *reporterRecoveryToolSet) IsStarted() bool       { return r.isStarted.Lo
 func (r *reporterRecoveryToolSet) setStartErr(err error) { r.startErr.Store(&err) }
 func (r *reporterRecoveryToolSet) clearStartErr()        { r.startErr.Store(nil) }
 
-// TestStartableToolSet_ExternalRecoveryClearsBackoffGate verifies that a
-// live StartReporter clears a stale backoff window in tryStartLocked so a
-// successful /toolset-restart is immediately visible via the next TryStart,
-// without waiting for the window to expire.
-//
-// Scenario:
-//  1. TryStart fails with a retryable error (gate armed).
-//  2. External restart succeeds: inner toolset's IsStarted() flips to true
-//     while the wrapper's started flag is still false.
-//  3. TryStart sees the live reporter, adopts the state, clears the window,
-//     and returns (true, nil) WITHOUT invoking the underlying Start.
-func TestStartableToolSet_ExternalRecoveryClearsBackoffGate(t *testing.T) {
+// TestStartableToolSet_DoesNotAdoptExternalRecovery verifies that the wrapper
+// remains the sole lifecycle owner: changing an inner reporter behind its back
+// does not clear retry state or mark the wrapper started.
+func TestStartableToolSet_DoesNotAdoptExternalRecovery(t *testing.T) {
 	t.Parallel()
 
 	inner := &reporterRecoveryToolSet{}
@@ -599,28 +591,17 @@ func TestStartableToolSet_ExternalRecoveryClearsBackoffGate(t *testing.T) {
 	assert.Check(t, !started)
 	assert.Check(t, is.Equal(inner.starts.Load(), int32(1)))
 
-	// Step 2: simulate an external restart (e.g. via /toolset-restart that
-	// called the inner Restartable directly). The inner reports IsStarted=true
-	// while the wrapper still has started=false and an active backoff window.
-	inner.clearStartErr()       // no more start error
-	inner.isStarted.Store(true) // inner reports live
+	// Mutating the inner reporter directly must not bypass the active gate.
+	inner.clearStartErr()
+	inner.isStarted.Store(true)
 
-	// Step 3: TryStart must detect the live reporter, adopt the state,
-	// clear the gate, and return (true, nil) — without calling underlying Start.
 	callsBefore := inner.starts.Load()
 	started, err = s.TryStart(t.Context())
-	assert.NilError(t, err, "TryStart must succeed after external recovery")
-	assert.Check(t, started, "wrapper must be latched as started after reporter-based recovery")
-	assert.Check(t, is.Equal(s.IsStarted(), true), "IsStarted must report started after recovery")
+	assert.Check(t, err != nil, "active retry gate must remain authoritative")
+	assert.Check(t, !started)
+	assert.Check(t, !s.IsStarted(), "wrapper must not adopt externally-mutated state")
 	assert.Check(t, is.Equal(inner.starts.Load(), callsBefore),
-		"external recovery must not invoke underlying Start: the wrapper adopted the reporter's state")
-
-	// Subsequent TryStart must short-circuit (latched healthy) without another Start.
-	started, err = s.TryStart(t.Context())
-	assert.NilError(t, err)
-	assert.Check(t, started)
-	assert.Check(t, is.Equal(inner.starts.Load(), callsBefore),
-		"latched toolset must not be restarted on subsequent TryStart")
+		"gated call must not invoke underlying Start")
 }
 
 // TestStartableToolSet_BlockingStartSkipsGate pins that blocking Start() is

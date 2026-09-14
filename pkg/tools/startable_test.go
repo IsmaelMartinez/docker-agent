@@ -236,6 +236,8 @@ type reportingToolSet struct {
 	started      bool
 	startCalls   int
 	restartCalls int
+	stops        int
+	restartErr   error
 }
 
 func (r *reportingToolSet) Tools(context.Context) ([]tools.Tool, error) {
@@ -249,6 +251,7 @@ func (r *reportingToolSet) Start(context.Context) error {
 }
 
 func (r *reportingToolSet) Stop(context.Context) error {
+	r.stops++
 	r.started = false
 	return nil
 }
@@ -257,6 +260,9 @@ func (r *reportingToolSet) IsStarted() bool { return r.started }
 
 func (r *reportingToolSet) Restart(context.Context) error {
 	r.restartCalls++
+	if r.restartErr != nil {
+		return r.restartErr
+	}
 	r.started = true
 	return nil
 }
@@ -282,6 +288,46 @@ func (r *reportingStartOnlyToolSet) Stop(context.Context) error {
 }
 
 func (r *reportingStartOnlyToolSet) IsStarted() bool { return r.started }
+
+func TestStartableToolSet_ExplicitRestartSynchronizesLifecycleState(t *testing.T) {
+	t.Parallel()
+
+	inner := &reportingToolSet{}
+	s := tools.NewStartable(inner)
+
+	assert.NilError(t, s.Start(t.Context()))
+	assert.Check(t, s.CanRestart())
+	assert.NilError(t, s.RestartIfSupported(t.Context()))
+	assert.Check(t, is.Equal(inner.restartCalls, 1))
+	assert.Check(t, s.IsStarted())
+
+	assert.NilError(t, s.StopIfStarted(t.Context()))
+	assert.Check(t, is.Equal(inner.stops, 1), "explicit restart must leave the wrapper latched for shutdown")
+	assert.Check(t, !inner.started)
+}
+
+func TestStartableToolSet_ExplicitRestartFailureSynchronizesLifecycleState(t *testing.T) {
+	t.Parallel()
+
+	errRestart := errors.New("restart failed")
+	inner := &reportingToolSet{restartErr: errRestart}
+	s := tools.NewStartable(inner)
+
+	assert.NilError(t, s.Start(t.Context()))
+	assert.ErrorIs(t, s.RestartIfSupported(t.Context()), errRestart)
+	assert.Check(t, !s.IsStarted())
+	assert.Check(t, s.ShouldReportFailure())
+	assert.Check(t, s.ShouldReportRecoveryFailure())
+}
+
+func TestStartableToolSet_ExplicitRestartUnsupported(t *testing.T) {
+	t.Parallel()
+
+	s := tools.NewStartable(&stubToolSet{})
+	assert.Check(t, !s.CanRestart())
+	assert.ErrorContains(t, s.RestartIfSupported(t.Context()), "does not support restart")
+	assert.Check(t, !s.IsStarted())
+}
 
 func TestStartableToolSet_RecoversDeadUnderlyingWithRestart(t *testing.T) {
 	t.Parallel()

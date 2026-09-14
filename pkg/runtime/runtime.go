@@ -1173,16 +1173,15 @@ func (r *LocalRuntime) AgentToolsetStatuses(name string) []tools.ToolsetStatus {
 }
 
 // RestartToolset locates the named toolset on the active agent and
-// asks it to restart in place. The supervisor closes the current
-// session and reconnects; this method blocks until the new session
-// is Ready, ctx is cancelled, or the underlying supervisor's
-// timeout elapses.
+// asks its canonical lifecycle wrapper to restart it in place. The wrapper
+// serializes the operation with start/stop and keeps its lifecycle state in
+// sync with the underlying supervisor.
 //
 // Returns an error when:
 //   - no toolset matches name (matching uses the same logic as the
 //     /tools dialog: the toolset's Name() if any, otherwise its
 //     description),
-//   - no matching toolset is supervisor-backed (no Restartable capability),
+//   - no matching toolset supports restart,
 //   - the supervisor itself returned an error (timeout, classified
 //     transport failure, etc.).
 //
@@ -1200,8 +1199,9 @@ func (r *LocalRuntime) RestartToolset(ctx context.Context, name string) error {
 			continue
 		}
 		found = true
-		if restartable, ok := tools.As[tools.Restartable](ts); ok {
-			return restartable.Restart(ctx)
+		startable, ok := ts.(*tools.StartableToolSet)
+		if ok && startable.CanRestart() {
+			return startable.RestartIfSupported(ctx)
 		}
 	}
 	if found {
@@ -1230,7 +1230,11 @@ func toolsetStatusFor(ts tools.ToolSet) tools.ToolsetStatus {
 		// earlier if Start failed.
 		status.State = lifecycleStateForUnsupervised(ts)
 	}
-	_, status.Restartable = tools.As[tools.Restartable](ts)
+	if startable, ok := ts.(*tools.StartableToolSet); ok {
+		status.Restartable = startable.CanRestart()
+	} else {
+		_, status.Restartable = tools.As[tools.Restartable](ts)
+	}
 	status.Name = nameFor(ts, status.Description)
 	return status
 }
