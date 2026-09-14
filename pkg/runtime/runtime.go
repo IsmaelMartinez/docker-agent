@@ -1801,45 +1801,10 @@ func (r *LocalRuntime) emitToolsProgressively(ctx context.Context, a *agent.Agen
 		return
 	}
 
-	// Start every toolset concurrently so one slow start (e.g. an MCP server
-	// pulling an image) doesn't delay the others; the context is already
-	// non-interactive here so no start can block on a user-driven flow. Each
-	// start is non-blocking and bounded (tools.TryStartWithTimeout): a start
-	// already in flight is skipped rather than joined, a wedged start is
-	// abandoned at the timeout, and outcomes are consumed in configuration
-	// order below so an early fast toolset is listed (and counted) without
-	// waiting for a slow later one. Peer-dependent toolsets start in a
-	// second wave, after the others have been attempted.
-	type startOutcome struct {
-		started bool
-		err     error
-	}
-	starts := make([]chan startOutcome, totalToolsets)
-	var independents sync.WaitGroup
-	var dependents []int
-	for i, toolset := range toolsets {
-		startable, ok := toolset.(*tools.StartableToolSet)
-		if !ok {
-			continue
-		}
-		starts[i] = make(chan startOutcome, 1)
-		if _, ok := tools.As[tools.PeerDependent](startable); ok {
-			dependents = append(dependents, i)
-			continue
-		}
-		independents.Go(func() {
-			started, err := startable.TryStartWithTimeout(ctx, r.toolStartTimeout)
-			starts[i] <- startOutcome{started: started, err: err}
-		})
-	}
-	for _, i := range dependents {
-		startable := toolsets[i].(*tools.StartableToolSet)
-		go func() {
-			independents.Wait()
-			started, err := startable.TryStartWithTimeout(ctx, r.toolStartTimeout)
-			starts[i] <- startOutcome{started: started, err: err}
-		}()
-	}
+	// Start scheduling and outcome classification are shared with the turn path.
+	// Channels retain configuration order while allowing early toolsets to be
+	// listed without waiting for slower later ones.
+	starts := a.StartToolSets(ctx, r.toolStartTimeout)
 
 	// Load tools from each toolset and emit progress
 	var totalTools int
@@ -1851,104 +1816,44 @@ func (r *LocalRuntime) emitToolsProgressively(ctx context.Context, a *agent.Agen
 
 		isLast := i == totalToolsets-1
 
-		// Handle the start outcome, including recovery: a previously-started
-		// toolset whose inner connection died (e.g. background invalid_token)
-		// had its recovery start attempted above so ShouldReportRecoveryFailure
-		// can fire the targeted re-auth notice. The attempt is a no-op when the
-		// toolset is already healthy, so starting it unconditionally is safe.
-		if startable, ok := toolset.(*tools.StartableToolSet); ok {
-			outcome := <-starts[i]
-			if err := outcome.err; err != nil {
-				desc := tools.DescribeToolSet(startable.ToolSet)
-				// A cancellation-family error means the bounded attempt may
-				// have abandoned a wedged Start that keeps running in the
-				// background holding the toolset's single-flight lock. The
-				// failure reporters below share that lock, so consulting them
-				// here would block on the very attempt just abandoned — never
-				// touch them for these errors.
-				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-					// Outer context done — possibly canceled after the
-					// top-of-loop check: the startup pass is being torn down,
-					// so return without a warning.
-					if ctx.Err() != nil {
-						return
-					}
-					if errors.Is(err, context.DeadlineExceeded) {
-						// A start that outlived its per-toolset deadline (e.g.
-						// an MCP container stuck behind a wedged Docker daemon)
-						// is reported directly: the abandoned Start goroutine
-						// has not returned, so the once-per-streak guard below
-						// has recorded nothing and would silently swallow the
-						// warning.
-						slog.WarnContext(ctx, "Toolset start timed out; skipping",
-							"agent", a.Name(), "toolset", desc, "timeout", r.toolStartTimeout)
-						a.AddToolWarning(fmt.Sprintf("%s is taking too long to start (>%s) — it keeps starting in the background and its tools appear once it is ready", desc, r.toolStartTimeout))
-						continue
-					}
-					// A Canceled error while the outer context is still live can
-					// only come from within the toolset's own Start; skip it for
-					// this pass like the agent's turn path does.
-					slog.DebugContext(ctx, "Toolset start canceled; skipping",
-						"agent", a.Name(), "toolset", desc, "cause", err)
-					continue
-				}
-				// IsAuthorizationRequired must be checked BEFORE
-				// ShouldReportFailure: this is the first — expected —
-				// failure of a deferred-OAuth toolset, and consuming the
-				// failure-reported flag here would suppress the *real*
-				// failure (e.g. server 4xx on the eventual interactive
-				// retry) that the user actually needs to see.
-				switch {
-				case tools.IsAuthorizationRequired(err):
-					// Two cases:
-					// 1. Initial startup deferral (toolset never ran): the
-					//    OAuth dialog will appear naturally on the first user
-					//    message — no need to pre-announce it.
-					// 2. Recovery: the toolset was previously working but the
-					//    background watcher detected a server-side invalid_token
-					//    (fixes #3198). Surface a deduped re-auth notice so the
-					//    user knows what is about to prompt on their next message.
-					if startable.ShouldReportRecoveryFailure() {
-						slog.WarnContext(ctx, "Toolset needs re-authentication after background token rejection",
-							"agent", a.Name(), "toolset", desc)
-						a.AddToolWarning(desc + " needs re-authentication — it will prompt on your next message, or use /toolset-restart")
-					} else {
-						slog.DebugContext(ctx, "Toolset deferred until first message", "agent", a.Name(), "toolset", desc, "reason", err)
-					}
-				// Route real failures through the agent's warning
-				// channel so the TUI surfaces a persistent,
-				// user-visible notice that includes the actual
-				// server-side cause (threaded through by
-				// remoteMCPClient.Initialize). Use the same
-				// once-per-streak guard as ensureToolSetsAreStarted
-				// so a failing toolset doesn't flood the UI with a
-				// new warning every time the agent is restarted.
-				case startable.ShouldReportFailure():
-					slog.WarnContext(ctx, "Toolset start failed; skipping", "agent", a.Name(), "toolset", desc, "error", err)
-					a.AddToolWarning(fmt.Sprintf("%s start failed: %v", desc, err))
-				default:
-					slog.DebugContext(ctx, "Toolset still unavailable; skipping", "agent", a.Name(), "toolset", desc, "error", err)
-				}
-				// A partial start leaves the composite latched and usable:
-				// fall through so its healthy subset (and the composite's
-				// own wrapper tool) is still listed and counted. Fully
-				// failed toolsets have nothing to list — skip them.
-				if !tools.IsPartialStart(err) {
-					continue
-				}
-			} else if !outcome.started {
-				// Another lifecycle operation holds the toolset's single-flight
-				// lock (e.g. a start abandoned by an earlier bounded attempt):
-				// skip the toolset for this startup pass — silently, because
-				// the failure reporters share that lock and consulting them
-				// would block on the very attempt being skipped. It is picked
-				// up once the attempt settles. Checked only on the error-free
-				// path: a partial start reports started=false with its error
-				// while the wrapper is latched, and must fall through above.
-				slog.DebugContext(ctx, "Toolset start already in flight; skipping",
-					"agent", a.Name(), "toolset", tools.DescribeToolSet(startable.ToolSet))
-				continue
+		outcome := <-starts[i]
+		desc := tools.DescribeToolSet(outcome.ToolSet.ToolSet)
+		switch outcome.Kind {
+		case tools.StartCanceled:
+			if ctx.Err() != nil {
+				return
 			}
+			slog.DebugContext(ctx, "Toolset start canceled; skipping", "agent", a.Name(), "toolset", desc, "cause", outcome.Err)
+			continue
+		case tools.StartTimedOut:
+			slog.WarnContext(ctx, "Toolset start timed out; skipping", "agent", a.Name(), "toolset", desc, "timeout", r.toolStartTimeout)
+			a.AddToolWarning(fmt.Sprintf("%s is taking too long to start (>%s) — it keeps starting in the background and its tools appear once it is ready", desc, r.toolStartTimeout))
+			continue
+		case tools.StartAuthorizationRequired:
+			if outcome.ReportRecovery {
+				slog.WarnContext(ctx, "Toolset needs re-authentication after background token rejection", "agent", a.Name(), "toolset", desc)
+				a.AddToolWarning(desc + " needs re-authentication — it will prompt on your next message, or use /toolset-restart")
+			} else {
+				slog.DebugContext(ctx, "Toolset deferred until first message", "agent", a.Name(), "toolset", desc, "reason", outcome.Err)
+			}
+			continue
+		case tools.StartFailed:
+			if outcome.ReportFailure {
+				slog.WarnContext(ctx, "Toolset start failed; skipping", "agent", a.Name(), "toolset", desc, "error", outcome.Err)
+				a.AddToolWarning(fmt.Sprintf("%s start failed: %v", desc, outcome.Err))
+			} else {
+				slog.DebugContext(ctx, "Toolset still unavailable; skipping", "agent", a.Name(), "toolset", desc, "error", outcome.Err)
+			}
+			continue
+		case tools.StartPartial:
+			if outcome.ReportFailure {
+				slog.WarnContext(ctx, "Toolset start failed; using healthy subset", "agent", a.Name(), "toolset", desc, "error", outcome.Err)
+				a.AddToolWarning(fmt.Sprintf("%s start failed: %v", desc, outcome.Err))
+			}
+		case tools.StartInFlight:
+			slog.DebugContext(ctx, "Toolset start already in flight; skipping", "agent", a.Name(), "toolset", desc)
+			continue
+		case tools.StartReady:
 		}
 
 		// Get tools from this toolset under a bounded deadline. A toolset
