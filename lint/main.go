@@ -43,6 +43,7 @@ var cops = []cop.Cop{
 	EnvironmentVariablePrefix,
 	NoStdoutInLibraries,
 	OTelTracerName,
+	AtomicStateWrite,
 }
 
 // programCops lists whole-program, inter-procedural cops. These run once over

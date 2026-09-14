@@ -553,7 +553,7 @@ func saveJSON(value any, outputPath string) (string, error) {
 		return "", err
 	}
 
-	if err := os.WriteFile(outputPath, data, 0o600); err != nil {
+	if err := os.WriteFile(outputPath, data, 0o600); err != nil { //rubocop:disable Lint/AtomicStateWrite // eval output file written once; atomicity not required
 		return "", err
 	}
 
