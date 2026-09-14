@@ -103,14 +103,10 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 			backend = genai.BackendVertexAI
 			httpClient = nil // Use ADC-managed client
 		default:
-			if value, exist := env.Get(ctx, "GEMINI_API_KEY"); exist {
-				apiKey = value
-			}
-			if value, exist := env.Get(ctx, "GOOGLE_API_KEY"); exist {
-				apiKey = value
-			}
-			if apiKey == "" {
-				return nil, errors.New("GOOGLE_API_KEY or GEMINI_API_KEY environment variable is required")
+			var err error
+			apiKey, err = directAPIKey(ctx, cfg, env)
+			if err != nil {
+				return nil, err
 			}
 
 			backend = genai.BackendGeminiAPI
@@ -187,6 +183,29 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		clientFn:   clientFn,
 		apiSurface: apiSurface,
 	}, nil
+}
+
+// directAPIKey resolves the Gemini API key for the direct path: the model's
+// token_key when set, otherwise GOOGLE_API_KEY or GEMINI_API_KEY.
+func directAPIKey(ctx context.Context, cfg *latest.ModelConfig, env environment.Provider) (string, error) {
+	if cfg.TokenKey != "" {
+		apiKey, _ := env.Get(ctx, cfg.TokenKey)
+		if apiKey == "" {
+			return "", fmt.Errorf("%s environment variable is required", cfg.TokenKey)
+		}
+		return apiKey, nil
+	}
+	var apiKey string
+	if value, exist := env.Get(ctx, "GEMINI_API_KEY"); exist {
+		apiKey = value
+	}
+	if value, exist := env.Get(ctx, "GOOGLE_API_KEY"); exist {
+		apiKey = value
+	}
+	if apiKey == "" {
+		return "", errors.New("GOOGLE_API_KEY or GEMINI_API_KEY environment variable is required")
+	}
+	return apiKey, nil
 }
 
 // defaultThoughtSignature is a well-known sentinel that tells Gemini to skip

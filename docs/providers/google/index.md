@@ -20,6 +20,8 @@ Docker Agent reads the first credential it finds from these environment variable
 | `GOOGLE_CLOUD_PROJECT`      | GCP project used when `GOOGLE_GENAI_USE_VERTEXAI` is set or for Vertex AI Model Garden. |
 | `GOOGLE_CLOUD_LOCATION`     | GCP region for Vertex AI (defaults to the SDK default).                             |
 
+On the Gemini Developer API, a model or [custom provider](../custom/index.md) that sets `token_key` reads its key from that variable instead of `GOOGLE_API_KEY` / `GEMINI_API_KEY`. The Vertex AI backends use Application Default Credentials and ignore `token_key`.
+
 ```bash
 # Gemini Developer API
 export GOOGLE_API_KEY="AI..."   # or GEMINI_API_KEY
