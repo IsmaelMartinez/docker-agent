@@ -805,8 +805,7 @@ func (c *Client) CreateResponseStream(
 		slog.ErrorContext(ctx, "Failed to marshal OpenAI responses request to JSON", "error", err)
 	}
 
-	// Choose transport: WebSocket or SSE (default). See webSocketEnabled for
-	// the cases where a WebSocket request falls back to SSE.
+	// Choose transport: WebSocket or SSE (default).
 	transport := getTransport(&c.ModelConfig)
 	trackUsage := c.TrackUsageEnabled()
 
@@ -828,7 +827,7 @@ func (c *Client) CreateResponseStream(
 		slog.DebugContext(ctx, "WebSocket transport requested but HTTP transport wrapper is set, using SSE",
 			"model", c.ModelConfig.Model)
 	case transport == "websocket":
-		slog.DebugContext(ctx, "WebSocket transport requested but the endpoint is OpenCode, using SSE so the session header is sent",
+		slog.DebugContext(ctx, "WebSocket transport requested but the endpoint is OpenCode, using SSE",
 			"model", c.ModelConfig.Model)
 	}
 
@@ -901,12 +900,9 @@ func authTokenForTokenKey(ctx context.Context, cfg *latest.ModelConfig, env envi
 	return token, cfg.TokenKey
 }
 
-// webSocketEnabled reports whether a transport=websocket request can be
-// honoured. gorilla/websocket dials raw TCP and never calls http.RoundTripper,
-// so WebSocket is declined in favour of SSE whenever something relies on the
-// HTTP transport: a registered transport wrapper, and OpenCode, whose session
-// header is set by a RoundTripper. It is also declined behind a gateway, since
-// most gateways do not support it.
+// webSocketEnabled reports whether transport=websocket can be honoured. WebSocket
+// dials bypass http.RoundTripper, so SSE is used behind a gateway, under a
+// transport wrapper, and for OpenCode, whose session header needs the RoundTripper.
 func webSocketEnabled(cfg *latest.ModelConfig, opts *options.ModelOptions) bool {
 	return getTransport(cfg) == "websocket" &&
 		opts.Gateway() == "" &&

@@ -277,7 +277,5 @@ func TestOpenCodeWebSocketFallsBackToSSE(t *testing.T) {
 		},
 	})
 
-	// The header is set by an http.RoundTripper, which a WebSocket dial never
-	// reaches, so OpenCode requests must stay on SSE.
 	assert.Nil(t, client.wsPool, "transport=websocket must be ignored for OpenCode")
 }

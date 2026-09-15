@@ -13,8 +13,7 @@ import (
 	"github.com/docker/docker-agent/pkg/httpclient"
 )
 
-// Alias configs as the clients receive them: provider defaults have already
-// filled in the base URL.
+// Alias configs as the clients receive them, base URL already resolved.
 var (
 	opencodeGoCfg  = &latest.ModelConfig{Provider: "opencode-go", BaseURL: "https://opencode.ai/zen/go/v1"}
 	opencodeZenCfg = &latest.ModelConfig{Provider: "opencode-zen", BaseURL: "https://opencode.ai/zen/v1"}

@@ -22,9 +22,6 @@ const opencodeHost = "opencode.ai"
 var opencodeSessionNamespace = uuid.MustParse("6f0c2a1e-8d4b-4c7f-9a3e-2b5d7e9f1c03")
 
 // IsOpenCodeProvider reports whether cfg's base URL points at opencode.ai.
-// Only the host counts: provider defaults fill in the built-in aliases' base
-// URL before any client is built, and an alias given its own base_url must
-// not send the session header to that other host.
 func IsOpenCodeProvider(cfg *latest.ModelConfig) bool {
 	if cfg == nil {
 		return false
