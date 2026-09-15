@@ -3,6 +3,86 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v1.140.0] - 2026-09-15
+
+This release adds file autocomplete to the lean TUI, fixes several tab and session management bugs, improves MCP callback safety under concurrent use, and introduces multiple new lint rules to enforce codebase consistency.
+
+## What's New
+
+- Adds `@` file autocomplete to the lean TUI, reusing VCS-aware file discovery and fuzzy matching, and preserving surrounding editor text when inserting selected paths
+- Adds request-time `TokenSource` authentication for OpenAI and Vertex AI providers
+- Adds request-scoped MCP callbacks (elicitation, sampling, OAuth) via a new `HandlerScope` type, preventing cross-request callback collisions; also adds safe MCP routing and multi-subscriber event delivery
+- Adds lint rule to enforce shared tool argument decoding via `tools.UnmarshalToolArguments` instead of raw `json.Unmarshal`
+- Adds lint rule to reject branching on `err.Error()` string content (`strings.Contains`, `strings.HasPrefix`, `strings.HasSuffix`)
+- Adds lint rule to prevent direct `os.Stdout` writes in library packages under `pkg/`
+- Adds lint rule to enforce `DOCKER_AGENT_` environment variable prefix, flagging legacy `CAGENT_*` names
+- Adds lint rule to require `atomicfile.Write` for marshalled state instead of `os.WriteFile`
+- Adds lint rule to flag bare `&http.Client{}` without an explicit `Transport`
+- Adds lint rule to sync the Toolset schema enum with `DefaultToolsetCreators`
+- Adds lint rule to enforce state paths go through `pkg/paths` instead of hard-coded `.cagent` literals
+
+## Improvements
+
+- Fuses assistant line styling and measurement into a single pass in the TUI, reducing redundant work on large message histories
+
+## Bug Fixes
+
+- Fixes `token_key` not being read in the Anthropic and Gemini clients; they now check `token_key` before falling back to their native environment variables
+- Fixes lean TUI not finalizing in-flight tool calls when a stream stops without a tool response; interrupted tools are now rendered as errors before the cancellation marker
+- Fixes TUI scoping of asynchronous input results and dialogs to their originating page, preventing responses from appearing in the wrong tab or on stale UI state
+- Fixes TUI session identity tracking by separating the live session ID from the immutable tab routing key, and preserving the previous session ID when clearing a tab
+- Fixes attention dialogs racing with tab switches and surviving their page lifetime by serializing attention delivery on the owning tab
+- Fixes the API server not forwarding the agent config envelope in gateway-bound requests
+- Fixes CI failure reporting to read job logs through the API (instead of `gh run view --log-failed`) and to allow ANSI escape sequences in log output
+
+## Technical Changes
+
+- Refactors `StartableToolSet` to be the single lifecycle owner for toolset startup, removing parallel state machines in Code Mode
+- Refactors toolset startup coordination into a unified `StartToolSets` function in `pkg/tools`
+- Centralizes model provider interfaces (`Provider`, `EmbeddingProvider`, `BatchEmbeddingProvider`, `RerankingProvider`) into a single `pkg/model/provider/contracts` package
+- Replaces `ProviderRegistry any` field with a typed `RebuildProviderFunc` closure to eliminate unsafe type assertions
+- Centralizes per-request gateway HTTP client setup into `base.NewGatewayClient`, removing duplicated boilerplate across OpenAI, Anthropic, and Gemini providers
+- Extracts shared `instrumentedBase` struct for capability-specific tracing wrappers, removing duplicated method bodies
+- Defers `GatewayToolset` temp-file creation to `Start`/`Restart` so secrets are not written to disk until the subprocess launches
+- Refactors TUI to return explicit `UpdateEffects` from `chat.Update` instead of using a routed-timer contract
+- Refactors TUI attention dialog handling into a dedicated `attention.go` file
+- Introduces `tabstate` package to hold synchronized per-tab status and attention state shared between the tab renderer and the owning tab
+### Pull Requests
+
+- [#4263](https://github.com/docker/docker-agent/pull/4263) - perf(tui): fuse assistant line styling and measurement
+- [#4264](https://github.com/docker/docker-agent/pull/4264) - docs: update CHANGELOG.md for v1.139.0
+- [#4265](https://github.com/docker/docker-agent/pull/4265) - feat(lint): enforce shared tool argument decoding
+- [#4266](https://github.com/docker/docker-agent/pull/4266) - feat(lint): add ErrorStringMatching cop and fix call sites
+- [#4267](https://github.com/docker/docker-agent/pull/4267) - feat(lint): add NoStdoutInLibraries cop and fix pkg/ violations
+- [#4269](https://github.com/docker/docker-agent/pull/4269) - feat(lint): add EnvironmentVariablePrefix cop and migrate pprof to DOCKER_AGENT_PPROF_ADDR
+- [#4270](https://github.com/docker/docker-agent/pull/4270) - fix(tui): fix session identity, attention state, and /clear persistence across tabs
+- [#4271](https://github.com/docker/docker-agent/pull/4271) - refactor(tools): establish StartableToolSet as single lifecycle owner
+- [#4272](https://github.com/docker/docker-agent/pull/4272) - refactor(provider): centralize model provider interfaces in contracts package
+- [#4273](https://github.com/docker/docker-agent/pull/4273) - feat(lint): sync Toolset schema enum with DefaultToolsetCreators
+- [#4274](https://github.com/docker/docker-agent/pull/4274) - feat(lint): add StatePathViaPathsPackage cop and fix call sites
+- [#4275](https://github.com/docker/docker-agent/pull/4275) - feat(lint): require atomicfile.Write for marshalled state
+- [#4276](https://github.com/docker/docker-agent/pull/4276) - feat(lint): add HTTPClientTransport cop to flag bare &http.Client{} without Transport
+- [#4277](https://github.com/docker/docker-agent/pull/4277) - refactor(tools): unify toolset startup coordination
+- [#4278](https://github.com/docker/docker-agent/pull/4278) - refactor(provider): replace ProviderRegistry any with typed RebuildProviderFunc
+- [#4279](https://github.com/docker/docker-agent/pull/4279) - fix(tui): scope asynchronous results and dialogs to their originating page
+- [#4280](https://github.com/docker/docker-agent/pull/4280) - feat(provider): add request-time TokenSource authentication for OpenAI and Vertex AI
+- [#4281](https://github.com/docker/docker-agent/pull/4281) - refactor(provider): centralize per-request gateway client setup
+- [#4282](https://github.com/docker/docker-agent/pull/4282) - feat(tools): request-scoped callbacks, safe MCP routing, and multi-subscriber event delivery
+- [#4283](https://github.com/docker/docker-agent/pull/4283) - refactor(tui): replace routed-timer contract with explicit UpdateEffects
+- [#4285](https://github.com/docker/docker-agent/pull/4285) - fix: read token_key in the Anthropic and Gemini clients
+- [#4286](https://github.com/docker/docker-agent/pull/4286) - refactor(mcp): make GatewayToolset construction side-effect free
+- [#4287](https://github.com/docker/docker-agent/pull/4287) - refactor(provider): compose capability-specific tracing wrappers
+- [#4288](https://github.com/docker/docker-agent/pull/4288) - fix(ci): read job logs through the API so main failures get reported
+- [#4289](https://github.com/docker/docker-agent/pull/4289) - test(tui): freeze the animation clock in the scrolled-up stream program test
+- [#4290](https://github.com/docker/docker-agent/pull/4290) - fix(tui): serialize attention delivery on the owning tab
+- [#4291](https://github.com/docker/docker-agent/pull/4291) - fix(server): forward the agent config envelope in API-server mode
+- [#4293](https://github.com/docker/docker-agent/pull/4293) - fix(ci): let gh print job logs that contain ANSI escapes
+- [#4295](https://github.com/docker/docker-agent/pull/4295) - feat(leantui): add file autocomplete
+- [#4296](https://github.com/docker/docker-agent/pull/4296) - ci: skip lint and test jobs on a main push the merge queue already tested
+- [#4297](https://github.com/docker/docker-agent/pull/4297) - fix(leantui): finalize interrupted tool calls
+- [#4299](https://github.com/docker/docker-agent/pull/4299) - docs: auto-update for merged PRs (2026-09-15)
+
+
 ## [v1.139.0] - 2026-09-14
 
 This release delivers several bug fixes for runtime delegation, TUI message handling, and configuration isolation, alongside new API capabilities, TUI performance improvements, and new lint enforcement tooling.
@@ -6236,3 +6316,5 @@ This release improves the terminal user interface with better error handling and
 [v1.138.1]: https://github.com/docker/docker-agent/releases/tag/v1.138.1
 
 [v1.139.0]: https://github.com/docker/docker-agent/releases/tag/v1.139.0
+
+[v1.140.0]: https://github.com/docker/docker-agent/releases/tag/v1.140.0
