@@ -65,6 +65,8 @@ The lean TUI supports a focused set of slash commands: `/new`, `/sessions`, `/co
 
 Prefix a message with `!` to run it as a shell command directly, without going through the agent — for example `!git status`. The command runs in your default shell and its output is shown inline in the transcript. Bang commands are disabled in read-only sessions.
 
+Type `@` to open a fuzzy-searchable file completion menu (respects `.gitignore`); press <kbd>Tab</kbd> or <kbd>Enter</kbd> to insert the selected file's path into the message text.
+
 ## Slash Commands
 
 Type `/` during a session to see available commands, or press <kbd>Ctrl</kbd>+<kbd>K</kbd> for the command palette:
