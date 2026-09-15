@@ -99,15 +99,16 @@ func streamOnce(t *testing.T, ctx context.Context, client *Client) {
 func TestOpenCodeSessionHeaderDerivedFromContext(t *testing.T) {
 	t.Parallel()
 	server, seen := startOpenCodeCapture(t)
+	redirect, _ := redirectTo(t, server.URL)
 	client := newOpenCodeTestClient(t, &latest.ModelConfig{
 		Provider: "opencode-go",
 		Model:    "deepseek-v4-flash",
-		BaseURL:  server.URL,
+		BaseURL:  "https://opencode.ai/zen/go/v1",
 		TokenKey: "OPENCODE_API_KEY",
 		ProviderOpts: map[string]any{
 			"api_type": "openai_chatcompletions",
 		},
-	})
+	}, redirect)
 
 	ctxA := httpclient.ContextWithSessionID(t.Context(), "conversation-a")
 	ctxB := httpclient.ContextWithSessionID(t.Context(), "conversation-b")
@@ -153,15 +154,16 @@ func TestOpenCodeSessionHeaderOnCustomProvider(t *testing.T) {
 func TestOpenCodeSessionHeaderFallsBackWithoutSession(t *testing.T) {
 	t.Parallel()
 	server, seen := startOpenCodeCapture(t)
+	redirect, _ := redirectTo(t, server.URL)
 	client := newOpenCodeTestClient(t, &latest.ModelConfig{
 		Provider: "opencode-zen",
 		Model:    "gpt-5",
-		BaseURL:  server.URL,
+		BaseURL:  "https://opencode.ai/zen/v1",
 		TokenKey: "OPENCODE_API_KEY",
 		ProviderOpts: map[string]any{
 			"api_type": "openai_chatcompletions",
 		},
-	})
+	}, redirect)
 
 	streamOnce(t, t.Context(), client)
 	streamOnce(t, t.Context(), client)
@@ -177,10 +179,11 @@ func TestOpenCodeSessionHeaderFallsBackWithoutSession(t *testing.T) {
 func TestOpenCodeSessionHeaderUserOverrideWins(t *testing.T) {
 	t.Parallel()
 	server, seen := startOpenCodeCapture(t)
+	redirect, _ := redirectTo(t, server.URL)
 	client := newOpenCodeTestClient(t, &latest.ModelConfig{
 		Provider: "opencode-go",
 		Model:    "deepseek-v4-flash",
-		BaseURL:  server.URL,
+		BaseURL:  "https://opencode.ai/zen/go/v1",
 		TokenKey: "OPENCODE_API_KEY",
 		ProviderOpts: map[string]any{
 			"api_type": "openai_chatcompletions",
@@ -188,7 +191,7 @@ func TestOpenCodeSessionHeaderUserOverrideWins(t *testing.T) {
 				"X-OpenCode-Session": "pinned-by-user",
 			},
 		},
-	})
+	}, redirect)
 
 	streamOnce(t, httpclient.ContextWithSessionID(t.Context(), "conversation-a"), client)
 
@@ -239,4 +242,42 @@ func TestOpenCodeSessionHeaderNotSentThroughGateway(t *testing.T) {
 	got := seen()
 	require.Len(t, got, 1)
 	assert.Empty(t, got[0], "gateway requests carry the gateway's own session header instead")
+}
+
+func TestOpenCodeSessionHeaderNotSentToAliasWithOtherBaseURL(t *testing.T) {
+	t.Parallel()
+	server, seen := startOpenCodeCapture(t)
+	client := newOpenCodeTestClient(t, &latest.ModelConfig{
+		Provider: "opencode-go",
+		Model:    "deepseek-v4-flash",
+		BaseURL:  server.URL,
+		TokenKey: "OPENCODE_API_KEY",
+		ProviderOpts: map[string]any{
+			"api_type": "openai_chatcompletions",
+		},
+	})
+
+	streamOnce(t, httpclient.ContextWithSessionID(t.Context(), "conversation-a"), client)
+
+	got := seen()
+	require.Len(t, got, 1)
+	assert.Empty(t, got[0], "an alias pointed at another host must not receive the session header")
+}
+
+func TestOpenCodeWebSocketFallsBackToSSE(t *testing.T) {
+	t.Parallel()
+	client := newOpenCodeTestClient(t, &latest.ModelConfig{
+		Provider: "opencode-zen",
+		Model:    "gpt-5",
+		BaseURL:  "https://opencode.ai/zen/v1",
+		TokenKey: "OPENCODE_API_KEY",
+		ProviderOpts: map[string]any{
+			"api_type":  "openai_responses",
+			"transport": "websocket",
+		},
+	})
+
+	// The header is set by an http.RoundTripper, which a WebSocket dial never
+	// reaches, so OpenCode requests must stay on SSE.
+	assert.Nil(t, client.wsPool, "transport=websocket must be ignored for OpenCode")
 }

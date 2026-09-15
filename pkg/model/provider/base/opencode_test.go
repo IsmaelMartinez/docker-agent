@@ -13,6 +13,13 @@ import (
 	"github.com/docker/docker-agent/pkg/httpclient"
 )
 
+// Alias configs as the clients receive them: provider defaults have already
+// filled in the base URL.
+var (
+	opencodeGoCfg  = &latest.ModelConfig{Provider: "opencode-go", BaseURL: "https://opencode.ai/zen/go/v1"}
+	opencodeZenCfg = &latest.ModelConfig{Provider: "opencode-zen", BaseURL: "https://opencode.ai/zen/v1"}
+)
+
 func TestIsOpenCodeProvider(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -21,8 +28,18 @@ func TestIsOpenCodeProvider(t *testing.T) {
 		want bool
 	}{
 		{name: "nil config", cfg: nil, want: false},
-		{name: "opencode-go alias", cfg: &latest.ModelConfig{Provider: "opencode-go"}, want: true},
-		{name: "opencode-zen alias", cfg: &latest.ModelConfig{Provider: "opencode-zen"}, want: true},
+		{name: "opencode-go alias", cfg: opencodeGoCfg, want: true},
+		{name: "opencode-zen alias", cfg: opencodeZenCfg, want: true},
+		{
+			name: "alias pointed at another host",
+			cfg:  &latest.ModelConfig{Provider: "opencode-go", BaseURL: "https://proxy.example/v1"},
+			want: false,
+		},
+		{
+			name: "alias name alone is not enough",
+			cfg:  &latest.ModelConfig{Provider: "opencode-go"},
+			want: false,
+		},
 		{
 			name: "custom provider on opencode.ai",
 			cfg:  &latest.ModelConfig{Provider: "custom", BaseURL: "https://opencode.ai/zen/go/v1"},
@@ -65,7 +82,7 @@ func TestIsOpenCodeProvider(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, isOpenCodeProvider(tt.cfg))
+			assert.Equal(t, tt.want, IsOpenCodeProvider(tt.cfg))
 		})
 	}
 }
@@ -106,18 +123,18 @@ func TestWrapOpenCodeSessionOnlyWrapsOpenCodeClients(t *testing.T) {
 	assert.Same(t, rec, opencode.Transport.(*opencodeSessionTransport).base)
 
 	bare := &http.Client{}
-	WrapOpenCodeSession(&latest.ModelConfig{Provider: "opencode-go"}, bare)
+	WrapOpenCodeSession(opencodeGoCfg, bare)
 	require.IsType(t, &opencodeSessionTransport{}, bare.Transport)
 	assert.Same(t, http.DefaultTransport, bare.Transport.(*opencodeSessionTransport).base, "a nil transport means the default one")
 
-	assert.NotPanics(t, func() { WrapOpenCodeSession(&latest.ModelConfig{Provider: "opencode-go"}, nil) })
+	assert.NotPanics(t, func() { WrapOpenCodeSession(opencodeGoCfg, nil) })
 }
 
 func TestOpenCodeSessionTransportSetsHeaderPerSession(t *testing.T) {
 	t.Parallel()
 	rec := &headerRecorder{}
 	client := &http.Client{Transport: rec}
-	WrapOpenCodeSession(&latest.ModelConfig{Provider: "opencode-go"}, client)
+	WrapOpenCodeSession(opencodeGoCfg, client)
 
 	do := func(ctx context.Context) *http.Request {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://opencode.ai/zen/go/v1/chat/completions", http.NoBody)
@@ -150,7 +167,7 @@ func TestOpenCodeSessionTransportKeepsPinnedHeader(t *testing.T) {
 	t.Parallel()
 	rec := &headerRecorder{}
 	client := &http.Client{Transport: rec}
-	WrapOpenCodeSession(&latest.ModelConfig{Provider: "opencode-zen"}, client)
+	WrapOpenCodeSession(opencodeZenCfg, client)
 
 	ctx := httpclient.ContextWithSessionID(t.Context(), "conversation-a")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://opencode.ai/zen/v1/responses", http.NoBody)

@@ -21,13 +21,13 @@ const opencodeHost = "opencode.ai"
 // Salts the hash so the header cannot be mapped back to the session ID.
 var opencodeSessionNamespace = uuid.MustParse("6f0c2a1e-8d4b-4c7f-9a3e-2b5d7e9f1c03")
 
-func isOpenCodeProvider(cfg *latest.ModelConfig) bool {
+// IsOpenCodeProvider reports whether cfg's base URL points at opencode.ai.
+// Only the host counts: provider defaults fill in the built-in aliases' base
+// URL before any client is built, and an alias given its own base_url must
+// not send the session header to that other host.
+func IsOpenCodeProvider(cfg *latest.ModelConfig) bool {
 	if cfg == nil {
 		return false
-	}
-	switch cfg.Provider {
-	case "opencode-go", "opencode-zen":
-		return true
 	}
 	u, err := url.Parse(cfg.BaseURL)
 	if err != nil {
@@ -41,7 +41,7 @@ func isOpenCodeProvider(cfg *latest.ModelConfig) bool {
 // OpenCode. Call it after any transport wrapper so the wrapper sees the header.
 // No-op for other providers and for a nil client (Vertex AI backends).
 func WrapOpenCodeSession(cfg *latest.ModelConfig, client *http.Client) {
-	if client == nil || !isOpenCodeProvider(cfg) {
+	if client == nil || !IsOpenCodeProvider(cfg) {
 		return
 	}
 	client.Transport = &opencodeSessionTransport{
