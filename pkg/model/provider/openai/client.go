@@ -148,6 +148,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 
 		httpClient := httpclient.NewHTTPClient(ctx)
 		globalOptions.WrapTransport(ctx, httpClient)
+		base.WrapOpenCodeSession(cfg, httpClient)
 		clientOptions = append(clientOptions, option.WithHTTPClient(httpClient))
 
 		client := openai.NewClient(clientOptions...)
@@ -197,10 +198,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 	// Pre-create the WebSocket pool when the transport is configured.
 	// The pool is cheap (no connections opened until the first Stream call)
 	// and eager init avoids a data race on the lazy path.
-	// WebSocket is also skipped when an HTTP transport wrapper is registered:
-	// gorilla/websocket dials raw TCP and never calls http.RoundTripper, so the
-	// wrapper cannot be applied. Fall back to SSE so the wrapper covers all calls.
-	if getTransport(cfg) == "websocket" && globalOptions.Gateway() == "" && globalOptions.TransportWrapper() == nil {
+	if webSocketEnabled(cfg, &globalOptions) {
 		baseURL := cmp.Or(cfg.BaseURL, "https://api.openai.com/v1")
 		client.wsPool = newWSPool(httpToWSURL(baseURL), client.buildWSHeaderFn())
 	}
@@ -805,15 +803,11 @@ func (c *Client) CreateResponseStream(
 	}
 
 	// Choose transport: WebSocket or SSE (default).
-	// WebSocket is disabled when using a Gateway since most gateways don't support it.
-	// WebSocket is also disabled when an HTTP transport wrapper is registered: gorilla/websocket
-	// dials raw TCP and never calls http.RoundTripper, so the wrapper cannot intercept those
-	// connections. Fall back to SSE so the wrapper applies to all requests.
 	transport := getTransport(&c.ModelConfig)
 	trackUsage := c.TrackUsageEnabled()
 
 	switch {
-	case transport == "websocket" && c.ModelOptions.Gateway() == "" && c.ModelOptions.TransportWrapper() == nil:
+	case webSocketEnabled(&c.ModelConfig, &c.ModelOptions):
 		stream, err := c.createWebSocketStream(ctx, params)
 		if err != nil {
 			slog.WarnContext(ctx, "WebSocket stream failed, falling back to SSE", "error", err)
@@ -826,8 +820,11 @@ func (c *Client) CreateResponseStream(
 		slog.DebugContext(ctx, "WebSocket transport requested but Gateway is configured, using SSE",
 			"model", c.ModelConfig.Model,
 			"gateway", c.ModelOptions.Gateway())
-	case transport == "websocket":
+	case transport == "websocket" && c.ModelOptions.TransportWrapper() != nil:
 		slog.DebugContext(ctx, "WebSocket transport requested but HTTP transport wrapper is set, using SSE",
+			"model", c.ModelConfig.Model)
+	case transport == "websocket":
+		slog.DebugContext(ctx, "WebSocket transport requested but the endpoint is OpenCode, using SSE",
 			"model", c.ModelConfig.Model)
 	}
 
@@ -904,6 +901,16 @@ func authTokenForTokenKey(ctx context.Context, cfg *latest.ModelConfig, env envi
 		}
 	}
 	return token, cfg.TokenKey
+}
+
+// webSocketEnabled reports whether transport=websocket can be honoured. WebSocket
+// dials bypass http.RoundTripper, so SSE is used behind a gateway, under a
+// transport wrapper, and for OpenCode, whose session header needs the RoundTripper.
+func webSocketEnabled(cfg *latest.ModelConfig, opts *options.ModelOptions) bool {
+	return getTransport(cfg) == "websocket" &&
+		opts.Gateway() == "" &&
+		opts.TransportWrapper() == nil &&
+		!base.IsOpenCodeProvider(cfg)
 }
 
 // getTransport returns the streaming transport preference from ProviderOpts.

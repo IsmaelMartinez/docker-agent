@@ -79,6 +79,7 @@ func NewClient(ctx context.Context, cfg *latest.ModelConfig, env environment.Pro
 		}
 		httpClient := httpclient.NewHTTPClient(ctx)
 		globalOptions.WrapTransport(ctx, httpClient)
+		base.WrapOpenCodeSession(cfg, httpClient)
 		requestOptions := append([]option.RequestOption{
 			option.WithHTTPClient(httpClient),
 		}, authOpts...)
