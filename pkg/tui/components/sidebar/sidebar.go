@@ -20,6 +20,7 @@ import (
 	"github.com/docker/docker-agent/pkg/effort"
 	"github.com/docker/docker-agent/pkg/gitbranch"
 	pathx "github.com/docker/docker-agent/pkg/path"
+	"github.com/docker/docker-agent/pkg/plans"
 	"github.com/docker/docker-agent/pkg/runtime"
 	"github.com/docker/docker-agent/pkg/session"
 	"github.com/docker/docker-agent/pkg/tools"
@@ -58,8 +59,9 @@ const (
 )
 
 // SectionVisibility controls which optional sidebar sections are rendered.
-// The zero value shows everything.
+// The zero value shows the original sections; plans are opt-in.
 type SectionVisibility struct {
+	ShowPlans       bool
 	HideSessionPath bool
 	HideUsage       bool
 	HideAgents      bool
@@ -158,6 +160,7 @@ type Model interface {
 	VisualGeneration() uint64
 	// WorkingDirectory returns the working directory path displayed in the sidebar.
 	WorkingDirectory() string
+	EditPlan(name, tabID string) tea.Cmd
 }
 
 type gitBranchChangedMsg string
@@ -414,6 +417,9 @@ type model struct {
 	// rendering so click zones can be registered explicitly rather than inferred
 	// from blank-line heuristics.
 	agentLineOwners []string
+	planData        messages.PlanSidebarDataMsg
+	recentPlans     []plans.Plan
+	planClickZones  map[int]planClickZone
 }
 
 // New creates a new sidebar bound to the given session state.
@@ -851,6 +857,9 @@ type ClickResult int
 
 const (
 	ClickNone ClickResult = iota
+	ClickPlan
+	ClickPlanBrowser
+	ClickPlanRefresh
 	ClickStar
 	ClickTitle        // Click on the title area (use double-click to edit)
 	ClickWorkingDir   // Click on the working directory line
@@ -868,7 +877,7 @@ func (m *model) HandleClick(x, y int) bool {
 }
 
 // HandleClickType returns what was clicked (see ClickResult).
-// For ClickAgent, the second return value is the agent name.
+// For ClickAgent or ClickPlan, the second return value is the canonical name.
 func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 	// Account for left padding
 	adjustedX := x - m.layoutCfg.PaddingLeft
@@ -906,6 +915,12 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 		// In collapsed mode, working dir line follows the title section.
 		// A hidden session path renders no line and must not keep a hit target.
 		vm := m.computeCollapsedViewModel(m.contentWidth(false))
+		if vm.PlansSummary != "" && adjustedX < vm.ContentWidth {
+			start := vm.LineCount() - 1 - linesNeeded(lipgloss.Width(vm.PlansSummary), vm.ContentWidth)
+			if y >= start && y < vm.LineCount()-1 {
+				return ClickPlanBrowser, ""
+			}
+		}
 		wdStartY := vm.titleSectionLines()
 		wdLines := linesNeeded(lipgloss.Width(vm.WorkingDir), vm.ContentWidth)
 
@@ -977,6 +992,11 @@ func (m *model) HandleClickType(x, y int) (ClickResult, string) {
 	// Check if click is on an agent name
 	if agentName, ok := m.agentClickZones[contentY]; ok {
 		return ClickAgent, agentName
+	}
+	if m.sectionVisibility.ShowPlans {
+		if zone, ok := m.planClickZones[contentY]; ok {
+			return zone.kind, zone.name
+		}
 	}
 
 	return ClickNone, ""
@@ -1211,6 +1231,9 @@ func (m *model) workingDirLine() string {
 // Update handles messages and updates the component state.
 func (m *model) Update(msg tea.Msg) (layout.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case messages.PlanSidebarDataMsg:
+		m.setPlans(msg)
+		return m, nil
 	case gitBranchChangedMsg:
 		m.gitBranchName = string(msg)
 		m.invalidateCache()
@@ -1533,6 +1556,7 @@ func (m *model) computeCollapsedViewModel(contentWidth int) CollapsedViewModel {
 		WorkingIndicator: m.workingIndicatorCollapsed(),
 		WorkingDir:       m.workingDirLine(),
 		InfoLine:         m.collapsedInfoLine(contentWidth),
+		PlansSummary:     toolcommon.TruncateText(m.plansSummary(), contentWidth),
 		ContentWidth:     contentWidth,
 	}
 	if !m.sectionVisibility.HideUsage {
@@ -1793,6 +1817,17 @@ func (m *model) renderSections(contentWidth int) []string {
 	if !m.sectionVisibility.HideTodos {
 		m.todoComp.SetSize(contentWidth)
 		appendSection(m.todoComp.Render())
+	}
+	m.planClickZones = nil
+	if m.sectionVisibility.ShowPlans {
+		section, zones := m.plansSection(contentWidth)
+		start := appendSection(section)
+		m.planClickZones = make(map[int]planClickZone)
+		for i, zone := range zones {
+			if zone.kind != ClickNone {
+				m.planClickZones[start+tabHeaderLines+i] = zone
+			}
+		}
 	}
 
 	return lines

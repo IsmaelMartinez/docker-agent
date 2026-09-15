@@ -978,10 +978,14 @@ func (m *appModel) handleApplySettings(msg messages.ApplySettingsMsg) (tea.Model
 // applyLayoutSettings applies the given layout to every chat page (all tabs
 // share the same layout) without persisting it.
 func (m *appModel) applyLayoutSettings(settings messages.LayoutSettings) (tea.Model, tea.Cmd) {
+	wasEnabled := m.planSidebarEnabled()
 	settings.SidebarPosition = messages.ParseSidebarPosition(string(settings.SidebarPosition))
 	settings.SectionSpacing = messages.ParseSectionSpacing(string(settings.SectionSpacing))
 	settings.SidebarInfoMode = messages.ParseSidebarInfoMode(string(settings.SidebarInfoMode))
 	m.layoutSettings = settings
+	if !m.planSidebarEnabled() {
+		m.cancelSidebarPlanEdit()
+	}
 
 	var cmds []tea.Cmd
 	for _, tab := range m.tabs {
@@ -994,6 +998,9 @@ func (m *appModel) applyLayoutSettings(settings messages.LayoutSettings) (tea.Mo
 		}
 	}
 	cmds = append(cmds, m.resizeAll())
+	if !wasEnabled && m.planSidebarEnabled() {
+		cmds = append(cmds, m.refreshPlanSidebarCmd())
+	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -1009,6 +1016,7 @@ func layoutSettingsFromConfig(l userconfig.LayoutSettings) messages.LayoutSettin
 		HideUsage:        l.HideUsage,
 		HideAgents:       l.HideAgents,
 		HideTools:        l.HideTools,
+		ShowPlans:        l.ShowPlans,
 		HideTodos:        l.HideTodos,
 	}
 }
@@ -1073,6 +1081,7 @@ func savePreferences(p messages.Preferences) error {
 		s.Layout = &userconfig.LayoutSettings{
 			SidebarPosition: position, SectionSpacing: spacing, SidebarInfoMode: infoMode,
 			ActiveAgentsOnly: layout.ActiveAgentsOnly,
+			ShowPlans:        layout.ShowPlans,
 			HideSessionPath:  layout.HideSessionPath, HideUsage: layout.HideUsage,
 			HideAgents: layout.HideAgents, HideTools: layout.HideTools, HideTodos: layout.HideTodos,
 		}

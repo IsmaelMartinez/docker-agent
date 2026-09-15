@@ -95,7 +95,10 @@ type appModel struct {
 	// plansSvc is the host-facing plan service behind /plans. Built lazily
 	// by plansService() so plan.SharedStorage() only resolves its directory
 	// after path configuration; tests inject one via WithPlansService.
-	plansSvc plans.Service
+	plansSvc                  plans.Service
+	planSidebarData           messages.PlanSidebarDataMsg
+	sidebarPlanEditGeneration uint64
+	sidebarPlanEditInFlight   bool
 
 	// planMutationTimeout and planReadTimeout override the bounded timeouts
 	// of plan persistence and plan read commands. Zero means the package
@@ -678,6 +681,7 @@ func (m *appModel) editorOpts() []editor.Option {
 // initSessionComponents creates a new chat page, session state, and editor for
 // the given app, then activates the owning tab.
 func (m *appModel) initSessionComponents(tabID string, a *app.App, sess *session.Session) {
+	m.cancelSidebarPlanEdit()
 	tab := m.ensureTab(tabID)
 	if tab.chatPage != nil {
 		m.retireAttention(tab)
@@ -685,6 +689,7 @@ func (m *appModel) initSessionComponents(tabID string, a *app.App, sess *session
 	}
 	ss := service.NewSessionState(sess)
 	cp := chat.New(m.ar, m.ctx(), a, ss, m.chatPageOpts()...)
+	cp.Update(m.planSidebarData)
 	cp.SetRoutingID(tabID)
 	ed := editor.New(m.history, m.editorOpts()...)
 
@@ -706,6 +711,7 @@ func (m *appModel) initAndFocusComponents() tea.Cmd {
 		m.activeTab.editor.Init(),
 		m.activeTab.editor.Focus(),
 		m.resizeAll(),
+		m.refreshPlanSidebarCmd(),
 	)
 }
 
@@ -721,7 +727,7 @@ func (m *appModel) contextShutdownCmd() tea.Cmd {
 
 // Init initializes the model.
 func (m *appModel) Init() tea.Cmd {
-	return tea.Batch(m.init(), m.tourStartupCmd(), m.autoThemeInitCmd())
+	return tea.Batch(m.init(), m.tourStartupCmd(), m.autoThemeInitCmd(), m.refreshPlanSidebarCmd())
 }
 
 // autoThemeInitCmd enables DEC mode 2031 (terminal color-scheme reports) so
@@ -1096,7 +1102,10 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// --- Dialog lifecycle ---
 
-	case dialog.OpenDialogMsg, dialog.CloseDialogMsg, dialog.ClosePlanDetailMsg:
+	case dialog.OpenDialogMsg:
+		m.cancelSidebarPlanEdit()
+		return m.forwardDialog(msg)
+	case dialog.CloseDialogMsg, dialog.ClosePlanDetailMsg:
 		return m.forwardDialog(msg)
 
 	case dialog.ExitConfirmedMsg:
@@ -1347,6 +1356,8 @@ func (m *appModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case messages.EditPlanMsg:
 		return m.handleEditPlan(msg)
+	case messages.EditSidebarPlanMsg:
+		return m.handleEditSidebarPlan(msg)
 
 	case planEditorClosedMsg:
 		return m.handlePlanEditorClosed(msg)
@@ -1565,8 +1576,8 @@ func (m *appModel) handleRoutedMsg(msg messages.RoutedMsg) (tea.Model, tea.Cmd) 
 	page, effects := tab.chatPage.UpdateEffects(msg.Inner)
 	tab.chatPage = page
 
-	// Shared plan mutations refresh the visible browser, regardless of origin.
-	if _, isPlanChange := msg.Inner.(*runtime.PlanChangedEvent); isPlanChange && m.planDialogOpen() {
+	// Shared plan mutations refresh visible sidebars and dialogs, regardless of origin.
+	if _, isPlanChange := msg.Inner.(*runtime.PlanChangedEvent); isPlanChange && m.planDataVisible() {
 		effects.Global = tea.Batch(effects.Global, m.planRefreshCmd(false))
 	}
 	return m, tea.Batch(stateCmd, effects.Cmd(false))
@@ -1923,6 +1934,7 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	if runner == nil {
 		return m, notification.ErrorCmd("Session not found")
 	}
+	m.cancelSidebarPlanEdit()
 	if outgoing != m.tabs[sessionID] {
 		m.parkAttention(outgoing)
 	}
@@ -1996,6 +2008,7 @@ func (m *appModel) handleSwitchTab(sessionID string) (tea.Model, tea.Cmd) {
 	if pendingCmd := m.replayPendingEvent(sessionID); pendingCmd != nil {
 		cmds = append(cmds, pendingCmd)
 	}
+	cmds = append(cmds, m.refreshPlanSidebarCmd())
 
 	return m, tea.Batch(cmds...)
 }
@@ -2031,6 +2044,9 @@ func (m *appModel) handleReorderTab(msg messages.ReorderTabMsg) {
 // handleCloseTab closes a session tab.
 func (m *appModel) handleCloseTab(sessionID string) (tea.Model, tea.Cmd) {
 	wasActive := sessionID == m.supervisor.ActiveID()
+	if wasActive {
+		m.cancelSidebarPlanEdit()
+	}
 
 	// Capture the working dir before closing so we can reuse it if this is the last tab.
 	var closedWorkingDir string
@@ -2272,10 +2288,15 @@ func (m *appModel) Bindings() []key.Binding {
 var (
 	transcriptionEnterKey  = key.NewBinding(key.WithKeys("enter"))
 	transcriptionEscapeKey = key.NewBinding(key.WithKeys("esc"))
+	sidebarPlanCancelKey   = key.NewBinding(key.WithKeys("esc"))
 )
 
 // handleKeyPress handles all keyboard input with proper priority routing.
 func (m *appModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, sidebarPlanCancelKey) && m.sidebarPlanEditInFlight {
+		m.cancelSidebarPlanEdit()
+		return m, nil
+	}
 	// Check if we should stop transcription on Enter or Escape
 	if m.transcriber.IsRunning() {
 		switch {

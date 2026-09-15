@@ -146,8 +146,8 @@ type Settings struct {
 }
 
 // LayoutSettings customizes the TUI chat layout. The zero value is the
-// default layout: sidebar on the right with every section visible and
-// normal spacing between sections.
+// default layout: sidebar on the right with all sections except Plans visible
+// and normal spacing between sections.
 type LayoutSettings struct {
 	// SidebarPosition places the session info sidebar: "right" (default),
 	// "left", "top", or "bottom".
@@ -170,6 +170,8 @@ type LayoutSettings struct {
 	HideAgents bool `yaml:"hide_agents,omitempty"`
 	// HideTools hides the tools section in the sidebar.
 	HideTools bool `yaml:"hide_tools,omitempty"`
+	// ShowPlans shows shared plans in the sidebar. Defaults to false.
+	ShowPlans bool `yaml:"show_plans,omitempty"`
 	// HideTodos hides the todo list section in the sidebar.
 	HideTodos bool `yaml:"hide_todos,omitempty"`
 }
