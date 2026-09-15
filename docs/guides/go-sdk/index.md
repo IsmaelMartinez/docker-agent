@@ -441,7 +441,6 @@ package main
 
 import (
     "context"
-    "encoding/json"
     "fmt"
 
     "github.com/docker/docker-agent/pkg/agent"
@@ -456,9 +455,11 @@ type AddNumbersArgs struct {
 }
 
 // Implement the tool handler
-func addNumbers(_ context.Context, toolCall tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
+func addNumbers(ctx context.Context, toolCall tools.ToolCall, _ tools.Runtime) (*tools.ToolCallResult, error) {
     var args AddNumbersArgs
-    if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
+    // Use tools.UnmarshalToolArguments instead of encoding/json directly so
+    // aijson repairs (and repair telemetry) apply to tool-call arguments.
+    if err := tools.UnmarshalToolArguments(ctx, toolCall, &args); err != nil {
         return nil, err
     }
 
