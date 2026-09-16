@@ -655,6 +655,31 @@ In **gateway mode** the wrapper is called on every LLM request because gateway c
 
 Returning `nil` from your wrapper function is not allowed; Docker Agent logs a warning and keeps the original transport instead.
 
+## Request-Time Token Authentication
+
+Use `options.WithTokenSource` to supply a short-lived bearer token to the OpenAI provider client, refreshed on every request instead of being read once from an environment variable.
+
+```go
+import (
+    "context"
+
+    "github.com/docker/docker-agent/pkg/model/provider/openai"
+    "github.com/docker/docker-agent/pkg/model/provider/options"
+)
+
+tokenSource := options.TokenSource(func(ctx context.Context) (string, error) {
+    // Resolve or refresh a bearer token, e.g. from an OAuth2 token source.
+    return fetchAccessToken(ctx)
+})
+
+client, err := openai.NewClient(ctx, &latest.ModelConfig{
+    Provider: "openai",
+    Model:    "gpt-4o",
+}, env, options.WithTokenSource(tokenSource))
+```
+
+The OpenAI client checks for a configured `TokenSource` before falling back to `token_key`, and uses it to set the `Authorization` header on both HTTP and WebSocket requests. Static API-key, ChatGPT, and gateway auth paths are unaffected. `FromModelOptions` round-trips the token source, so a cloned provider config keeps it. Vertex AI Model Garden uses this option internally to refresh GCP access tokens through the standard `oauth2.TokenSource` machinery.
+
 ## Using Different Providers
 
 ```go
